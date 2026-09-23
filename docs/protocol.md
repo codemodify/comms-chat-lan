@@ -1,308 +1,403 @@
 # The protocol
 
-comms-chat-lan speaks three protocols. Two of them are between machines and
-are specified here: the **beacon**, a UDP multicast announcement that finds
-peers, and the **conversation**, a TCP stream of JSON frames that carries
-everything else. The third, the JSON-RPC between the daemon and its front
-ends, is local to one machine and is described in
-[architecture.md](architecture.md).
+comms-chat-lan speaks three protocols. Two of them are between machines
+and are specified here: the **beacon**, a UDP multicast announcement by
+which a client finds the server, and the **session**, a TCP stream of JSON
+frames carrying everything else. The third, the JSON-RPC between
+`comms-chat-lan-clientd` and its front ends, is local to one machine and
+is described in [architecture.md](architecture.md).
 
-Everything here is version **1** (`chatcore.ProtocolVersion`). A peer
-announcing or handshaking a different version is ignored rather than
+Everything here is version **2** (`chatwire.ProtocolVersion`). Version 1
+was the peer-to-peer protocol this replaced; it is gone rather than
+deprecated, and nothing in this repository speaks it. A server or client
+announcing or enrolling with a different version is ignored rather than
 half-understood: with one version in the wild there is nothing to
 negotiate, and code that pretends to negotiate is code nobody has tested.
 
 Forward compatibility is one rule: **unknown frame types are ignored.** A
-future version may add frames, and this version will carry on talking to it.
+future version may add frames, and this version will carry on talking to
+it.
+
+The shape of the whole thing in one paragraph: there is one server. Every
+client daemon holds one connection to it. The server assigns every message
+a sequence number, stores it, and relays it to everyone entitled to see
+it; a client that was not connected asks for what it missed by naming the
+last sequence number it saw. Everything else — presence, typing, rooms,
+files — travels over that same connection.
 
 ---
 
 ## 1. The beacon
 
+The server announces itself. Clients listen. That is the only direction:
+a client never announces anything, and a beacon with nothing to announce
+sends nothing at all.
+
 ### Why it is not mDNS
 
-The obvious answer to "find other copies of this app on the LAN" is
-DNS-SD over mDNS, and we are not doing it. A correct mDNS responder is RFC
-6762 and RFC 6763 — probing and conflict resolution, known-answer
-suppression, cache-flush bits, negative responses, the shared/unique record
-distinction — and a partial one is not merely incomplete: it *collides*
-with the avahi daemon already running on the machine and misbehaves on the
-wire for everybody else on the segment.
-
-What this app needs from discovery is one sentence, repeated: *I am this
-id, I am called this, dial me on this port.* That is about a hundred lines
-we fully control, and that is what the beacon is.
+A correct DNS-SD responder is RFC 6762 plus RFC 6763 — probing and
+conflict resolution, known-answer suppression, cache-flush semantics,
+negative responses — and a partial one does not merely fall short, it
+collides with the avahi daemon already running on the machine. What this
+application needs from discovery is one sentence, repeated: *I am this
+server, connect to me on this port.* So it sends one sentence, repeatedly,
+in about a hundred lines we fully control.
 
 ### The cost, stated plainly
 
-**comms-chat-lan is discoverable only by other copies of comms-chat-lan.**
-`avahi-browse -a` will not show it. `dns-sd -B` will not show it. It
-advertises no DNS-SD service type and answers no mDNS query. If you need
-this app to appear in generic service-discovery tooling, that is a second
-`Discovery` implementation somebody has to write; the interface is there
-for it (see [architecture.md](architecture.md)).
+**The server is discoverable only by this application's own clients.**
+`avahi-browse` will not show it. `dns-sd -B` will not show it. It
+advertises no DNS-SD service type and answers no mDNS query.
+
+Where multicast does not reach — another segment, a VPN, a container
+network with no multicast route, a switch that drops it — the client is
+**told** the address instead:
+
+```sh
+comms-chat-lan-clientd -server kestrel
+comms-chat-lan-clientd -server 10.0.0.5:47772
+UITK_CHAT_SERVER=10.0.0.5:47772 comms-chat-lan-clientd
+```
+
+A bare host name gets the default port, 47772. An address given this way
+wins over discovery, and turns discovery off entirely: there is nothing
+left to discover.
 
 ### Wire format
 
-One UDP datagram, sent to the multicast group:
+One UDP packet to **239.192.77.77:47771** — the IPv4 organisation-local
+scope (RFC 2365), routed inside a site and never off it — with TTL 1. The
+packet is the magic `CHATLAN/2 ` followed by one compact JSON object:
 
-| | |
+```
+CHATLAN/2 {"v":2,"id":"<32 hex>","name":"the office","host":"kestrel","port":47772}
+```
+
+| field | meaning |
 |---|---|
-| group | `239.192.77.77` |
-| port | `47771` |
-| TTL | `1` |
-| maximum size | 1200 bytes |
+| `v` | protocol version; anything else is dropped unparsed |
+| `id` | the server's id: 16 random bytes, hex, from its identity.json |
+| `name` | what the server calls itself, display only, ≤ 48 runes |
+| `host` | the server's host name, display only, never resolved |
+| `port` | the TCP port to connect to |
+| `bye` | present on the farewell packet sent at shutdown |
 
-`239.192.0.0/14` is the IPv4 organisation-local scope (RFC 2365): routed
-inside a site, never off it. A TTL of 1 keeps a packet on the local
-segment.
+A packet is at most 1200 bytes, under the smallest MTU worth worrying
+about, so an announcement is never fragmented.
 
-The datagram is the magic string `CHATLAN/1 ` (ten bytes, note the trailing
-space) followed by one compact JSON object:
+**The address a client dials is the packet's source IP with the announced
+port.** It is never read from the payload: an announcement may lie about
+what it is called, but it cannot point a client at a third machine.
 
-```
-CHATLAN/1 {"v":1,"id":"5f3a…","nick":"sam","color":"#2f6fd0","host":"kestrel","port":47772,"rooms":["general"],"pres":"online"}
-```
-
-| field | type | meaning |
-|---|---|---|
-| `v` | int | protocol version; must be 1 |
-| `id` | string | the peer's id: 32 lowercase hex digits (16 random bytes) |
-| `nick` | string | display name, at most 32 runes after trimming |
-| `color` | string | avatar colour, `#rrggbb` |
-| `host` | string | the announcer's host name, for display only |
-| `port` | int | the TCP port the peer accepts conversations on |
-| `rooms` | []string | rooms the peer has joined, lower-cased |
-| `pres` | string | `online`, `away` or `busy` |
-| `bye` | bool | present and true only in the farewell packet |
-
-**The peer's address is the packet's source IP plus the announced `port`.**
-It is never read from the payload. An announcement can lie about its
-nickname; it cannot point anyone at a third machine.
-
-A packet that fails any of these checks is dropped silently: wrong magic,
-wrong version, malformed id, port outside 1–65535, an over-long nickname or
-host, more than 32 rooms, more than 1200 bytes.
+The magic carries the version, so a client of the peer-to-peer version of
+this application and a server of this one never even parse each other's
+packets.
 
 ### Timing
 
-| | |
-|---|---|
-| announce every | 12 seconds |
-| expire a peer after | 40 seconds of silence |
-
-Forty seconds is three missed announcements plus a margin. One lost packet
-on a busy wireless network is routine and must not make somebody blink out
-of the roster.
-
-On a clean shutdown a peer sends one packet with `"bye":true` and
-`"pres":"offline"`. It is best effort — a `kill -9` sends nothing — and
-the only cost of losing it is that the other side waits out the expiry.
+Announced every **12 seconds**; a server not heard from for **40 seconds**
+is considered gone. Three missed announcements, because one lost packet on
+a busy wireless network is routine and must not make the server blink out.
+A goodbye packet at shutdown means a client does not have to wait out the
+expiry.
 
 ### Several instances on one machine
 
-The beacon socket is bound with `SO_REUSEADDR` and `SO_REUSEPORT`, and
-multicast loopback is on. Running two copies of the app side by side is the
-first thing anybody trying a LAN chat app does, and without this the second
-one fails to bind.
-
-A beacon ignores announcements carrying its own peer id, so a machine never
-sees itself as a peer.
+The group port is bound with `SO_REUSEADDR` and `SO_REUSEPORT`, and
+multicast loopback is on. A server and two clients on one machine is how
+this is tried out for the first time, and it is how the tests work.
 
 ### Turning it off
 
-`UITK_CHAT_NO_DISCOVERY=1` (or `comms-chatd -no-discovery`) starts the
-daemon with a `Discovery` that announces nothing and hears nothing. No
-multicast leaves the machine. The app still works between peers that have
-already been added, and this is what the tests use.
-
-`UITK_CHAT_IFACE=<name>` pins the beacon to one interface. By default it
-announces on every interface that is up, multicast-capable and has an IPv4
-address — a laptop on wifi with a docker bridge up would otherwise announce
-on whichever one the routing table prefers, which is rarely the one the
-other people are on.
+`UITK_CHAT_NO_DISCOVERY=1`, or `-no-discovery` on either binary. The
+server then announces nothing and every client has to be told where it is.
 
 ---
 
-## 2. The conversation
-
-Two peers talk over one plain TCP connection. Either may open it; there is
-no client and no server.
+## 2. The session
 
 ### Framing
 
+One TCP connection from the client daemon to the server, carrying
+length-prefixed JSON:
+
 ```
-+--------+----------------------------+
-| uint32 |  that many bytes of JSON   |
-| BE len |                            |
-+--------+----------------------------+
+uint32 big-endian length | length bytes of JSON
 ```
 
-Length-prefixed rather than line-delimited because file chunks share the
-stream, and base64 inside a line-oriented protocol makes the framing depend
-on the payload. The maximum frame is **1 MiB**; a larger length is an error
-and the connection is dropped. It is not resynchronised — trying to
-resynchronise a stream after a framing error is how a parser becomes an
-attack surface.
+A length prefix rather than NDJSON because file chunks travel in the same
+stream, and base64 in a line-oriented protocol makes the framing depend on
+the payload. A length over **1 MiB** is an error and the connection is
+dropped: the stream cannot be resynchronised, and trying is how a parser
+becomes an attack surface.
 
-JSON rather than a packed binary encoding because the whole protocol fits
-on this page, and a chat app is never limited by its frame encoder.
+Every frame is a flat object with a `t` field. Fields a type does not use
+are omitted.
 
-### The handshake
+### Enrolment
 
-Both sides send `hello` immediately on connecting. Neither waits for the
-other's first.
+The client sends `hello` and the server answers `welcome`. There is no
+third step.
 
 ```json
-{"t":"hello","v":1,"from":"5f3a…","nick":"sam","color":"#2f6fd0","host":"kestrel","port":47772,"rooms":["general"]}
+{"t":"hello","v":2,"from":"<32 hex>","nick":"sam","color":"#2f6fd0",
+ "host":"box","rooms":["general"],"pres":"online","cur":812,"srv":"<32 hex>"}
 ```
 
-The connection is dropped if the frame is not a `hello`, the version is not
-1, or the id is not 32 hex digits. A dialler also drops the connection if
-the answering peer's id is not the one it meant to dial — the address it
-had may belong to somebody else now, and filing the conversation under the
-wrong peer would be worse than failing.
+```json
+{"t":"welcome","v":2,"srv":"<32 hex>","srvname":"the office","host":"kestrel",
+ "cur":840,"reset":false,"now":"2026-09-23T10:14:00Z","peer":{...}}
+```
+
+**Enrolment is open.** The server records who joined and refuses nobody.
+There is no code, no passphrase and no approval, and the server keeps no
+list of who is allowed — because there is no such list to keep. The only
+thing a hello can be refused for is speaking the wrong protocol or
+sending a malformed id. What that means for you is in
+[security.md](security.md), which does not soften it.
+
+The client keeps its own id and nickname; the server takes them as given.
+`rooms` is the client's own membership and wins, including when it is
+empty: room membership belongs to the person, and the server is keeping it
+for them rather than deciding it.
+
+The `welcome` is written before anything else on the connection, so it is
+always the first frame a client sees.
+
+### The cursor, and resuming
+
+`cur` in the hello is **the last sequence number the client saw**. `srv`
+is the server it belongs to.
+
+After the welcome the server sends, in this order:
+
+1. `roster` — everyone it has ever enrolled, with who is connected now;
+2. every message with a sequence number above the cursor that this client
+   may see, oldest first;
+3. `synced`, carrying the server's current sequence number.
+
+That is the whole of "what did I miss". There is no queue, no retry and no
+separate offline-message mechanism: a message for somebody who is away is
+an ordinary stored message whose sequence number is above their cursor.
+
+Three ways the cursor is not used as given, all of them answered with
+`"reset":true` and a window of the most recent 200 messages of every
+conversation the client can see instead of a delta:
+
+* **A cursor ahead of the server.** It did not come from here — a server
+  restored from a backup, or a client that was talking to a different
+  one.
+* **A cursor from another server.** The client says which server its
+  number belongs to; if it is not this one, the number means nothing
+  here. A position in one sequence is not a position in another.
+* **A cursor so far behind** that the delta is over 2000 messages.
+  Somebody who has been away a month wants the recent conversation, not a
+  month of replay before they can type.
+
+A reset does not discard anything the client already has. Nothing the
+server says makes what the client was told yesterday untrue; the history
+stays, the cursor is what restarts.
+
+A message may arrive twice — once relayed live, once from the backlog, in
+the moment between the two. That is deliberate. A duplicate costs nothing,
+because every message carries its own id and both ends file it once; the
+alternative is a window in which a message arrives neither way.
 
 ### Frames
 
-| `t` | fields | meaning |
-|---|---|---|
-| `hello` | `v`, `from`, `nick`, `color`, `host`, `port`, `rooms` | the handshake, both directions |
-| `msg` | `id`, `conv`, `body`, `sent`, `seq`, `nick` | one message |
-| `ack` | `id` | the message was stored |
-| `typing` | `conv`, `typing` | advisory, never stored |
-| `presence` | `pres`, `nick`, `color`, `rooms` | a change between beacons |
-| `offer` | `tid`, `name`, `size`, `mime`, `sha256` | a file is offered |
-| `accept` | `tid` | the offer is accepted |
-| `decline` | `tid`, `reason` | the offer is refused, or a transfer cancelled |
-| `chunk` | `tid`, `off`, `data` | one slice of a file; `data` is base64 |
-| `done` | `tid`, `sha256`, `size` | the last chunk has been sent |
-| `bye` | — | a clean close |
+Client → server:
 
-### What a peer may and may not assert
+| `t` | carries |
+|---|---|
+| `hello` | enrolment and cursor, above |
+| `msg` | one composed message: `id`, `conv`, `body`, `sent`, and a file reference if it announces one |
+| `presence` | `pres`, and a changed `nick` or `color` |
+| `typing` | `conv`, `typing` |
+| `join` / `leave` | `room` |
+| `offer` `accept` `decline` `chunk` `done` | file transfer, below |
+| `ping` / `pong` | liveness |
+| `bye` | a clean close |
 
-A frame is data from an unauthenticated stranger. Two things are
-recomputed rather than believed:
+Server → client:
 
-* **The sender.** A message is filed under the peer id established by the
-  handshake on this connection, never under the `from` in the frame. A peer
-  cannot post as somebody else.
-* **The conversation.** A peer may name a room, or name nothing. If it
-  names a direct conversation, the only one it can possibly mean is the one
-  between us and it, and that is what it gets.
+| `t` | carries |
+|---|---|
+| `welcome` | the answer to a hello |
+| `msg` | one sequenced message, `conv` written as *this* recipient names it |
+| `seq` | `id` and `seq`: the sequence your message was given |
+| `roster` | `peers` (all) or `peer` (one changed entry) |
+| `typing` | `from`, `conv`, `typing` |
+| `synced` | `cur`, and `room` when it ends a join's backfill |
+| `offer` `accept` `decline` `chunk` `done` | relayed, with `from` stamped |
+| `error` | `code` and a `reason` a person could read |
+| `ping` / `pong` / `bye` | as above |
 
-A message whose body is over 8000 runes is refused. A room name is
-lower-cased, trimmed and capped at 48 characters.
+Error codes: `1` bad frame, `2` not enrolled, `3` no such person, `4` not
+in that room, `5` refused (a limit). An `error` never closes the
+connection by itself.
+
+### What a client may and may not assert
+
+**The sender is the identity that enrolled on the connection**, never the
+`from` in the frame. The server overwrites it. A client cannot file a
+message as somebody else however it is spelled.
+
+**The conversation is recomputed, not taken on trust.** A client may name
+a room it has joined, or the one-to-one conversation between itself and
+one other enrolled person. Anything else is refused with `error`.
+
+The nickname shown against a message is the sender's nickname **as the
+server has it at the time**, not what the frame says. History keeps what
+somebody was called then, not what they are called now.
 
 ### Ordering
 
-Messages are ordered by `(sent, seq, id)`:
+The server assigns each accepted message a **sequence number** from one
+counter, and that number is the order of the conversation on every machine
+that holds it. The sender's clock (`sent`) is shown beside the message and
+sorts nothing.
 
-* `sent` is the **sender's** wall clock. It is not trustworthy.
-* `seq` is the sender's own monotonic counter, which breaks a tie.
-* `id` breaks the remaining tie and is globally unique by construction:
-  `<short peer id>-<nanoseconds>-<random>`.
+This is the one thing a server is for. Two people whose clocks disagree
+used to see the same conversation in two orders, and there was nobody to
+ask which was right. The counter survives a restart — it is restored from
+the highest sequence in the stored history — because a counter that
+restarted would reorder everything already said.
 
-Every peer holding the same set of messages therefore shows them in the
-same order, whatever order they arrived in, with nobody being the server.
-It is not necessarily the *true* order — with no clock anyone trusts, it
-cannot be — and two peers whose clocks disagree will agree with each other
-while both being wrong about reality.
+A message the client has composed but the server has not yet sequenced has
+no number, and sorts **last**: it is the line the person just typed, and
+it belongs at the bottom until the server says where it really goes.
 
-### Delivery, and a peer that is offline
+### Delivery, and a server that is not there
 
-A message we send is stored at once as `queued` and the composer returns.
-It is then:
+A composed message is stored locally at once as `queued` and the front end
+returns. It is then `sending` while it is on the wire and `delivered` when
+the server's `seq` comes back. Nothing optimistically assumes delivery.
 
-1. `sending` while it is on the wire,
-2. `delivered` when the `ack` comes back,
-3. back to `queued` if the peer could not be reached.
+If the server is unreachable the message stays `queued` — on disk, in the
+conversation, visible to the person who typed it — and goes out when the
+link is back, after the client has caught up, so it lands behind what it
+missed rather than in front of it. That resend is the same code path as
+the first send.
 
-Back to `queued`, not `failed`: a peer that is not answering is asleep, not
-gone. When the beacon says it is back, the queue is flushed to it oldest
-first, automatically. A daemon restart with a message still `sending`
-reloads it as `queued`, so nothing is silently lost.
+**A resend is free.** The message id is minted by the sender, so a message
+composed while the server was down already has its final identity. The
+server recognises an id it already holds, stores nothing, and answers with
+the sequence number the message was given the first time.
 
-A duplicate is free: the receiver recognises the message id, drops it, and
-still sends the `ack` — because a resend happens precisely when the first
-ack was lost.
+### A server restart with clients still connected
 
-### Two peers dialling each other at once
+The clients' connections die and they reconnect with backoff. The server
+is the same server: its id and its history are on disk, so the cursors
+every client is holding are still positions in the same sequence, and each
+client is sent only what it missed while the process was down.
 
-Both open a connection, so the pair briefly has two. Both sides keep **the
-connection whose dialler is the numerically smaller peer id** and drop the
-other. It is computed from the only facts both sides have — the two ids —
-so both reach the same answer, and the pair ends with exactly one
-connection rather than none or two.
+An `-ephemeral` server is a different matter: it keeps nothing, so its
+sequence starts again and every client's cursor is ahead of it. Each one
+is told `reset` and sent what little there is. That is the correct
+behaviour for a server that has genuinely forgotten, and it is why
+`-ephemeral` is for trying things out rather than for running anything.
 
-### A message from a peer nobody announced
+### Two clients on one identity
 
-Accepted, and marked. A network with broken multicast must not mean a dead
-app, so an unsolicited inbound connection is honoured; but the peer's
-roster entry records that we never heard it announce itself, and both front
-ends say so. Anyone on the LAN can be one.
+A desktop and a laptop sharing an `identity.json` are both that person.
+The server keeps a list of connections per identity, and everything that
+goes to a person goes to all of them, including the echo of what either
+one sends and the `seq` for it. Presence is whether any of them is
+connected. The last one to enrol asserts the room list.
 
-A blocked peer is refused at accept, before the handshake is believed.
+Nothing stops a *stranger* enrolling under somebody else's id either. That
+is the same sentence as "enrolment is open", and [security.md](security.md)
+says what it costs.
 
 ### Rooms
 
-A room is a name. Anyone who joins a room of the same name is in it; there
-is nobody to ask. Membership is what peers advertise in their beacon.
+A room is a name, folded to lower case and trimmed, 1–48 characters.
+`join` puts the sender in it; the server answers with the room's most
+recent 200 messages and a `synced` naming the room.
 
-A room message is sent to every peer that advertises the room **at the
-moment of sending**. There is no history sync: a peer that was away does
-not receive it later. With no server there is nobody to ask for what was
-missed, and pretending otherwise would be the more dishonest design.
+**That is the late joiner.** Somebody who joins `#general` on Thursday
+reads Monday's conversation, because the server kept it and their cursor
+is simply behind. It is the same relay path as everything else.
+
+A room message reaches only the people the server has in that room, and a
+client that has not joined a room cannot send to it — `error` code 4.
+Leaving stops the messages; the history stays, on the server and in the
+cache, and rejoining shows it again.
 
 ### Typing indicators
 
-Best effort, never queued, never stored. A late typing indicator is worse
-than none. An indicator that is not refreshed expires after 6 seconds, so
-somebody who starts typing and then walks away does not appear to be typing
-for ever.
+Relayed, never stored, never replayed. An indicator that arrives late is
+worse than one that never arrives. They expire after six seconds without
+a refresh, on the receiving client, so somebody who starts typing and
+walks away does not type for ever.
+
+### Presence
+
+What a client says it is doing — online, away, busy — relayed to everybody
+as a roster update. What the server *reports* is what it can see: an
+identity with no connection is offline whatever it last claimed, so
+somebody whose laptop lost power is offline without having said so.
+
+When a client loses the link it marks its whole cached roster offline. It
+cannot see anybody, and a status bar that implied otherwise would be
+telling the one lie it must not tell.
 
 ### File transfer
 
+The bytes go through the server, because clients do not connect to each
+other any more.
+
 ```
-sender                                receiver
-  |  offer (tid, name, size, sha256)  |
-  |---------------------------------->|
-  |                                   |  a person decides
-  |          accept (tid)             |
-  |<----------------------------------|
-  |  chunk (tid, off=0,       data)   |
-  |---------------------------------->|
-  |  chunk (tid, off=65536,   data)   |
-  |---------------------------------->|
-  |            …                      |
-  |  done (tid, sha256, size)         |
-  |---------------------------------->|
+sender                server                receiver
+  ── offer ─────────────► (record) ───────────► offer
+                                             ◄── accept ──
+  ◄──────────────────────── accept ───────────
+  ── chunk (n) ─────────► (check) ────────────► chunk
+  ── done ──────────────►             ───────► done
 ```
 
-* **Nothing is written to disk before an accept.** The offer is a message
-  in the conversation and a row in the transfer list; that is all.
-* The receiver chooses the path, from a sanitised base name, inside its own
-  download directory. The sender has no say in where its file goes. An
-  incoming name is reduced to a single path component with control
-  characters removed, and a name that already exists gets ` (2)`, ` (3)`
-  and so on — an incoming file never overwrites anything.
-* Chunks are 64 KiB before base64. A chunk at the wrong offset, or one that
-  would take the total past the offered size, drops the connection: the
-  peer is not following the protocol, and the alternative is writing bytes
-  nobody agreed to.
-* The SHA-256 is verified on arrival, and a file that does not match is
-  deleted. **This catches corruption, not tampering.** Somebody who can
-  change the bytes can change the digest with them.
-* A file over 2 GiB is refused, and one peer may have at most 8 transfers
-  open at a time.
-* A transfer interrupted by a restart is not resumed. It is shown as
-  failed and the sender is asked again.
-* Files go to one peer, never to a room.
+* An `offer` names the file, its size, its type and a SHA-256. Nothing
+  moves and nothing is written until the receiver accepts.
+* **Both ends must be connected.** An offer to somebody who is not is
+  refused by the server at once with a `decline` saying so. A file is a
+  live thing, and a progress bar that never moves is worse than a
+  sentence.
+* **An offer nobody answers is cancelled** by the server after two
+  minutes, and both ends are told. A receiver who has walked away is the
+  ordinary case, not an exception.
+* The server checks what it relays: only the offering side may send
+  chunks, only for an accepted transfer, only in order, and never more
+  in total than the offer claimed. A sender that breaks any of those ends
+  the transfer for both.
+* The server keeps nothing. It does not spool the file and it does not
+  see it again once the last chunk is passed on.
+* The receiver chooses the path, inside its own download directory, from
+  a sanitised base name. The sender and the server have no say in it.
+* At most 8 transfers open per person; at most 2 GiB per file.
+* The SHA-256 is recomputed on arrival and a file that does not match is
+  deleted. **That catches a truncated or corrupted transfer, including a
+  relay that lost its place. It is not a security check** — anyone who can
+  change the bytes can change the digest with them, and the bytes pass
+  through the server.
+* A transfer does not survive a dropped link. It is marked failed and the
+  sender is asked again; resumption would need the receiver to persist
+  partial state, the sender to keep the file unchanged and the server to
+  remember both.
 
 ---
 
 ## 3. What this protocol does not do
 
-It does not encrypt. It does not authenticate. It does not resist a
-determined participant on your network. See
-[security.md](security.md), which says exactly what that means.
+* **No encryption.** Every frame, including every file, crosses the LAN in
+  the clear.
+* **No authentication.** Enrolment is open and an identity is whatever a
+  client says it is. Nothing prevents somebody enrolling as your
+  colleague.
+* **No authorisation.** Anyone enrolled can join any room and read
+  everything said in it from then on.
+* **No federation.** One server, one LAN. Two servers do not know about
+  each other, and a cursor from one means nothing to the other.
+* **No delivery receipt from the other person.** `delivered` means the
+  server took it, not that anybody read it.
+
+[security.md](security.md) is the whole position, in two minutes.
