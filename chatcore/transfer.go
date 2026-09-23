@@ -180,6 +180,10 @@ func DownloadDir() string {
 func safeBaseName(name string) string {
 	name = strings.ReplaceAll(name, "\\", "/")
 	name = filepath.Base(filepath.Clean("/" + name))
+	if name == "/" || name == "." {
+		// An empty name, or one that was nothing but separators.
+		return "file"
+	}
 	var b strings.Builder
 	for _, r := range name {
 		switch {

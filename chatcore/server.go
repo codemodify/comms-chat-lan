@@ -91,6 +91,11 @@ func ListenAndServe(ctx context.Context, socket string, node *Node) error {
 		_ = ln.Close()
 	}()
 	err = srv.Serve(ln)
+	// The listener is closed, so no new front end can arrive; the ones
+	// already connected are dropped too. Leaving them attached to a
+	// daemon that is shutting down would leave each one waiting out its
+	// call timeout instead of noticing at once and redialling.
+	srv.closeClients()
 	<-nodeDone
 	return err
 }
@@ -128,6 +133,17 @@ func isClosed(err error) bool {
 		return false
 	}
 	return err == net.ErrClosed || strings.Contains(err.Error(), "use of closed network connection")
+}
+
+// closeClients drops every connected front end.
+func (s *Server) closeClients() {
+	s.mu.Lock()
+	conns := s.conns
+	s.conns = map[*rpcConn]struct{}{}
+	s.mu.Unlock()
+	for c := range conns {
+		_ = c.Close()
+	}
 }
 
 // Clients is how many front ends are connected, for status.get.
