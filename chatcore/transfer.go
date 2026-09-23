@@ -232,25 +232,12 @@ func uniquePath(dir, name string) (string, error) {
 
 // guessMIME is a content type from the extension alone. The daemon never
 // sniffs the bytes and never acts on the type; it is shown to the user so
-// they can decide, and the UI uses it to know whether to try a thumbnail.
+// they can decide; nothing branches on it.
 func guessMIME(name string) string {
 	if t := mime.TypeByExtension(strings.ToLower(filepath.Ext(name))); t != "" {
 		return strings.SplitN(t, ";", 2)[0]
 	}
 	return "application/octet-stream"
-}
-
-// IsImage reports whether a transfer is an image, for the UI's inline
-// preview. It is a display decision, never a security one.
-func IsImage(mimeType, name string) bool {
-	if strings.HasPrefix(mimeType, "image/") {
-		return true
-	}
-	switch strings.ToLower(filepath.Ext(name)) {
-	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
-		return true
-	}
-	return false
 }
 
 // newTransfer is a fresh record with the timestamp filled in.

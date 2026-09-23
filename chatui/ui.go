@@ -49,7 +49,6 @@ type session struct {
 	self      chatcore.Identity
 	convs     []chatcore.Conversation
 	current   chatcore.ConversationID
-	msgs      []chatcore.Message
 	peers     map[chatcore.PeerID]chatcore.Peer
 	typing    map[chatcore.ConversationID][]chatcore.PeerID
 	transfers map[chatcore.TransferID]chatcore.Transfer
@@ -309,7 +308,6 @@ func (s *session) reloadAll() {
 		s.mu.Lock()
 		s.self = id
 		s.mu.Unlock()
-		s.script.self = id.ID
 	}
 	s.reloadPeers()
 	s.reloadTransfers()
@@ -423,9 +421,6 @@ func (s *session) reloadMessages() {
 	if err != nil {
 		return
 	}
-	s.mu.Lock()
-	s.msgs = msgs
-	s.mu.Unlock()
 	s.script.SetMessages(msgs)
 	// A conversation is read bottom-up: land on the newest line. It has
 	// to happen twice — once now, for the case where the transcript is

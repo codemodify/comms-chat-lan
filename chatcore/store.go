@@ -85,14 +85,6 @@ func NewMemoryStore() *Store {
 // Dir is where the store writes, or "" for a memory store.
 func (s *Store) Dir() string { return s.dir }
 
-// Backend names the store for status.get.
-func (s *Store) Backend() string {
-	if s.dir == "" {
-		return "memory"
-	}
-	return "disk"
-}
-
 // ---------------------------------------------------------------- identity
 
 // Self is our own identity.

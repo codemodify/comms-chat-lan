@@ -29,7 +29,6 @@ type transcript struct {
 	widget.Base
 
 	msgs []chatcore.Message
-	self chatcore.PeerID
 	// nameOf and colorOf resolve a sender. They are supplied by the
 	// session, which is the only thing that knows the roster.
 	nameOf  func(chatcore.PeerID) string

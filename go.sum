@@ -1,7 +1,5 @@
 github.com/codemodify/paintengine2d v0.11.0 h1:IEIGp/B+/cqwOoK63tsO4sxKRB8g/AjcYgDIZcY/ONc=
 github.com/codemodify/paintengine2d v0.11.0/go.mod h1:+e0/rlydkknTGd/M0k6uigFBMjFluCXVF2sqmMsO0a4=
-github.com/codemodify/uitoolkit v0.19.1 h1:vkc7aW4wl8yvlT+xTO1EXecxyV36GtP3eNSAxXYTT0s=
-github.com/codemodify/uitoolkit v0.19.1/go.mod h1:VCb1tYX/CrswBxhxrzYJ/M1XRob2EIK8iJU0pfW2WK4=
 github.com/codemodify/uitoolkit v0.19.2-0.20260923035601-15b5246d1a5d h1:nKGMMwLPJ2yhIiDhBQu24Cxs9UyH0+PxNnFpn6MzfXY=
 github.com/codemodify/uitoolkit v0.19.2-0.20260923035601-15b5246d1a5d/go.mod h1:vgrBZXkdFfZ7sNpD854j6a6sXeGVtbutOdRlcfApQ74=
 github.com/gdamore/encoding v1.0.1 h1:YzKZckdBL6jVt2Gc+5p82qhrGiqMdG/eNs6Wy0u3Uhw=

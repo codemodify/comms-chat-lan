@@ -102,7 +102,6 @@ func (s *session) showPreferences() {
 				s.mu.Lock()
 				s.self = id
 				s.mu.Unlock()
-				s.script.self = id.ID
 			}
 			s.drawStatus()
 			s.reloadMessages()
