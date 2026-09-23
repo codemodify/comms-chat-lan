@@ -208,11 +208,23 @@ func TestTheServerOrdersAndRelaysAMessage(t *testing.T) {
 	if seqOf(a, "morning") == 0 || seqOf(a, "morning back") == 0 {
 		t.Fatal("a message was relayed without a sequence number")
 	}
-	if seqOf(a, "morning") >= seqOf(a, "morning back") {
-		t.Fatal("the server did not order the two messages")
+	// Not which of the two came first: they were sent down two connections
+	// at once and either may reach the server first. What the server
+	// promises is that it picks one order, that the two messages do not
+	// share a number, and that everybody is told the same one.
+	if seqOf(a, "morning") == seqOf(a, "morning back") {
+		t.Fatal("two messages were given the same sequence number")
 	}
-	if seqOf(a, "morning") != seqOf(b, "morning") {
+	if seqOf(a, "morning") != seqOf(b, "morning") ||
+		seqOf(a, "morning back") != seqOf(b, "morning back") {
 		t.Fatal("two clients were given different sequence numbers for one message")
+	}
+	// One client's own messages do keep the order it sent them in: that is
+	// one connection, and the server reads it in order.
+	a.send(chatwire.Frame{Type: chatwire.FrameMsg, ID: "m3", Conv: chat.RoomConv("general"), Body: "one"})
+	a.send(chatwire.Frame{Type: chatwire.FrameMsg, ID: "m4", Conv: chat.RoomConv("general"), Body: "two"})
+	if seqOf(a, "one") >= seqOf(a, "two") {
+		t.Fatal("one client's own messages came back out of order")
 	}
 	// And the sender was told where its own message landed.
 	ack := a.waitFor("the sequence for m1", func(f chatwire.Frame) bool {
