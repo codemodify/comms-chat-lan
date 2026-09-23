@@ -1,9 +1,9 @@
 // Package chatui is comms-chat-lan's desktop front end, built on
 // uitoolkit (https://github.com/codemodify/uitoolkit).
 //
-// It is a client of comms-chatd and nothing else: it opens no socket of
-// its own, speaks no protocol to the LAN, and holds no state beyond what
-// it is currently showing. Everything it shows came from a JSON-RPC call
+// It is a client of comms-chat-lan-clientd and nothing else: it opens no
+// socket of its own, speaks no protocol to the LAN, never sees the
+// server, and holds no state beyond what it is currently showing. Everything it shows came from a JSON-RPC call
 // and everything it changes is a JSON-RPC call, which is what lets the
 // desktop UI and the terminal UI be open at the same time and agree.
 package chatui
@@ -501,7 +501,7 @@ func (s *session) drawStatus() {
 	s.mu.Unlock()
 
 	if !up {
-		s.status.SetParts("comms-chatd is not answering — reconnecting…", "", "")
+		s.status.SetParts("comms-chat-lan-clientd is not answering — reconnecting…", "", "")
 		return
 	}
 	who := fmt.Sprintf("%s — %s", self.Nick, self.Presence.Valid())

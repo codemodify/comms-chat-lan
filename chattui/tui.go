@@ -1,7 +1,8 @@
 // Package chattui is comms-chat-lan's terminal front end. It is a client
-// of comms-chatd over the same Unix socket and the same JSON-RPC as the
-// desktop UI, and it holds no business logic: everything it shows came
-// from a method call, and everything it changes is a method call.
+// of comms-chat-lan-clientd over the same Unix socket and the same
+// JSON-RPC as the desktop UI, and it holds no business logic: everything
+// it shows came from a method call, and everything it changes is a
+// method call.
 //
 // It is meant to be used over ssh for a whole working day, so it is
 // entirely keyboard-driven, it redraws only what changed, and it survives
@@ -804,7 +805,7 @@ func (u *UI) drawStatus() {
 	self, up := u.self, u.up
 	u.mu.Unlock()
 	if !up {
-		u.status.SetText(" [red]comms-chatd is not answering — reconnecting…[-]")
+		u.status.SetText(" [red]comms-chat-lan-clientd is not answering — reconnecting…[-]")
 		return
 	}
 	colour := tcellHex(self.Color)

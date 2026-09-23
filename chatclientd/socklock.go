@@ -10,7 +10,7 @@ import (
 	"syscall"
 )
 
-// Socket hardening for comms-chatd.
+// Socket hardening for comms-chat-lan-clientd.
 //
 // The daemon exposes the whole message history, the roster and the send
 // path over this socket with no authentication of its own, so the socket
@@ -39,7 +39,7 @@ func (l *socketLock) release() {
 }
 
 // lockSocket takes the per-socket lock file. An error means another
-// comms-chatd is already serving that path.
+// comms-chat-lan-clientd is already serving that path.
 func lockSocket(socket string) (*socketLock, error) {
 	path := socket + ".lock"
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
@@ -48,7 +48,7 @@ func lockSocket(socket string) (*socketLock, error) {
 	}
 	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
 		_ = f.Close()
-		return nil, fmt.Errorf("chat: another comms-chatd is already serving %s (%w)", socket, err)
+		return nil, fmt.Errorf("chat: another comms-chat-lan-clientd is already serving %s (%w)", socket, err)
 	}
 	if err := f.Truncate(0); err == nil {
 		_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())

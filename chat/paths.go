@@ -57,17 +57,17 @@ func DataDir() string {
 	return filepath.Join(home, ".local", "share", "comms-chat-lan")
 }
 
-// DefaultSocket is the comms-chatd listen path: $UITK_CHAT_SOCK, else
-// $XDG_RUNTIME_DIR/comms-chatd.sock, else a per-uid path under the temp
-// directory.
+// DefaultSocket is where comms-chat-lan-clientd listens for front ends:
+// $UITK_CHAT_SOCK, else $XDG_RUNTIME_DIR/comms-chat-lan-clientd.sock,
+// else a per-uid path under the temp directory.
 func DefaultSocket() string {
 	if p := strings.TrimSpace(os.Getenv(EnvSock)); p != "" {
 		return p
 	}
 	if dir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); dir != "" {
-		return filepath.Join(dir, "comms-chatd.sock")
+		return filepath.Join(dir, "comms-chat-lan-clientd.sock")
 	}
-	return filepath.Join(os.TempDir(), "comms-chatd-"+strconv.Itoa(os.Getuid())+".sock")
+	return filepath.Join(os.TempDir(), "comms-chat-lan-clientd-"+strconv.Itoa(os.Getuid())+".sock")
 }
 
 var identityMu sync.Mutex

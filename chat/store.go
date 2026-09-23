@@ -82,7 +82,7 @@ func NewStore(dir string) (*Store, error) {
 }
 
 // NewMemoryStore is a Store that writes nothing. Tests and the headless GUI
-// fixture use it; so does `comms-chatd -ephemeral`.
+// fixture use it; so does `-ephemeral` on either daemon.
 func NewMemoryStore() *Store {
 	s, _ := NewStore("")
 	return s
