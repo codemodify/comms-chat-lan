@@ -134,41 +134,57 @@ func TestTheTerminalUIDrawsOnASimulatedTerminal(t *testing.T) {
 		}
 	})
 
-	if !waitForText(t, screen, "standup", 5*time.Second) {
-		t.Fatalf("the room never appeared on screen:\n%s", screenText(screen))
+	if !waitForText(t, u, screen, "standup", 5*time.Second) {
+		t.Fatalf("the room never appeared on screen:\n%s", u.snapshot(screen))
 	}
-	if !waitForText(t, screen, "Conversations", 3*time.Second) {
-		t.Fatalf("the sidebar never drew:\n%s", screenText(screen))
+	if !waitForText(t, u, screen, "Conversations", 3*time.Second) {
+		t.Fatalf("the sidebar never drew:\n%s", u.snapshot(screen))
 	}
 
 	// Ctrl+G is the one key a new user is told about, so it had better
 	// put the help up.
 	screen.InjectKey(tcell.KeyCtrlG, 0, tcell.ModCtrl)
-	if !waitForText(t, screen, "Keys and commands", 3*time.Second) {
-		t.Fatalf("Ctrl+G did not open the help:\n%s", screenText(screen))
+	if !waitForText(t, u, screen, "Keys and commands", 3*time.Second) {
+		t.Fatalf("Ctrl+G did not open the help:\n%s", u.snapshot(screen))
 	}
 	// And Escape had better take it away again.
 	screen.InjectKey(tcell.KeyEscape, 0, tcell.ModNone)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		if !strings.Contains(screenText(screen), "Keys and commands") {
+		if !strings.Contains(u.snapshot(screen), "Keys and commands") {
 			return
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	t.Fatalf("Escape did not close the help:\n%s", screenText(screen))
+	t.Fatalf("Escape did not close the help:\n%s", u.snapshot(screen))
 }
 
-func waitForText(t *testing.T, s tcell.SimulationScreen, want string, d time.Duration) bool {
+func waitForText(t *testing.T, u *UI, s tcell.SimulationScreen, want string, d time.Duration) bool {
 	t.Helper()
 	deadline := time.Now().Add(d)
 	for time.Now().Before(deadline) {
-		if strings.Contains(screenText(s), want) {
+		if strings.Contains(u.snapshot(s), want) {
 			return true
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
 	return false
+}
+
+// snapshot reads the simulation screen from tview's own goroutine.
+// SimulationScreen.GetContents hands back the live cell slice, which the
+// draw goroutine is still writing to, so reading it from the test
+// goroutine is a genuine data race in anybody's test. Queueing the read
+// onto the loop serialises it with the drawing.
+func (u *UI) snapshot(s tcell.SimulationScreen) string {
+	ch := make(chan string, 1)
+	go u.app.QueueUpdate(func() { ch <- screenText(s) })
+	select {
+	case text := <-ch:
+		return text
+	case <-time.After(3 * time.Second):
+		return ""
+	}
 }
 
 func screenText(s tcell.SimulationScreen) string {

@@ -39,6 +39,11 @@ type transcript struct {
 	// onActivate is called when a row with a file on it is opened with
 	// Return or a double click.
 	onActivate func(chatcore.Message)
+	// afterLayout runs once, after the next layout. The session uses it to
+	// pin a freshly loaded conversation to its newest line: how far the
+	// enclosing scroll view can scroll is not known until this widget has
+	// measured itself, which has not happened when the messages arrive.
+	afterLayout func()
 
 	// selected is the row the keyboard is on, -1 for none. A transcript
 	// has to be keyboard-reachable like everything else in the window,
@@ -95,6 +100,10 @@ func (t *transcript) Measure(c layout.Constraints) paintengine2d.Point {
 func (t *transcript) Arrange(r paintengine2d.Rect) {
 	t.SetBounds(r)
 	t.relayout(r.Dx())
+	if fn := t.afterLayout; fn != nil {
+		t.afterLayout = nil
+		fn()
+	}
 }
 
 // relayout wraps every message for a width, and remembers the width it

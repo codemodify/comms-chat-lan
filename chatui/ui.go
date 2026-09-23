@@ -427,8 +427,14 @@ func (s *session) reloadMessages() {
 	s.msgs = msgs
 	s.mu.Unlock()
 	s.script.SetMessages(msgs)
-	// A conversation is read bottom-up: land on the newest line.
-	s.scroll.ScrollTo(s.scroll.MaxOffset())
+	// A conversation is read bottom-up: land on the newest line. It has
+	// to happen twice — once now, for the case where the transcript is
+	// already the right size, and once after the next layout, because
+	// until the transcript has measured the new messages the scroll view
+	// does not yet know how far down "the bottom" is.
+	pin := func() { s.scroll.ScrollTo(s.scroll.MaxOffset()) }
+	pin()
+	s.script.afterLayout = pin
 	s.drawOfferBar()
 }
 

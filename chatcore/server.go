@@ -25,6 +25,10 @@ type Server struct {
 	mu      sync.Mutex
 	conns   map[*rpcConn]struct{}
 	serving bool
+	// closed is set once the daemon is shutting down. A connection
+	// accepted in the moment before that has to be dropped too — see
+	// handleConn.
+	closed bool
 }
 
 type rpcConn struct {
@@ -135,9 +139,11 @@ func isClosed(err error) bool {
 	return err == net.ErrClosed || strings.Contains(err.Error(), "use of closed network connection")
 }
 
-// closeClients drops every connected front end.
+// closeClients drops every connected front end and refuses any that are
+// still being set up.
 func (s *Server) closeClients() {
 	s.mu.Lock()
+	s.closed = true
 	conns := s.conns
 	s.conns = map[*rpcConn]struct{}{}
 	s.mu.Unlock()
@@ -162,6 +168,16 @@ func (s *Server) handleConn(raw net.Conn) {
 	}
 	c := &rpcConn{Conn: raw, w: bufio.NewWriter(raw)}
 	s.mu.Lock()
+	// Accept and registration are not one step: the listener hands the
+	// connection to this goroutine, which may not be scheduled before the
+	// daemon is asked to stop. A connection that registered after
+	// closeClients ran would be left attached to a daemon that is gone,
+	// and the front end would sit there believing it was connected.
+	if s.closed {
+		s.mu.Unlock()
+		_ = raw.Close()
+		return
+	}
 	s.conns[c] = struct{}{}
 	s.mu.Unlock()
 	defer func() {
