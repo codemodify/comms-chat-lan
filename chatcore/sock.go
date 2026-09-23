@@ -32,6 +32,16 @@ func OpenNode(dir string) (*Node, error) {
 // Discovery is off unless disc says otherwise, so a test run never
 // announces itself on the real network and never sees the real one.
 func StartInProcess(ctx context.Context, disc Discovery) (socket string, stop func(), err error) {
+	return startInProcess(ctx, disc, nil)
+}
+
+// startSeeded is StartInProcess with discovery off and a store the caller
+// fills in first.
+func startSeeded(ctx context.Context, seed func(*Store)) (socket string, stop func(), err error) {
+	return startInProcess(ctx, NoDiscovery(), seed)
+}
+
+func startInProcess(ctx context.Context, disc Discovery, seed func(*Store)) (socket string, stop func(), err error) {
 	dir, err := os.MkdirTemp("", "comms-chatd-")
 	if err != nil {
 		return "", nil, err
@@ -43,6 +53,9 @@ func StartInProcess(ctx context.Context, disc Discovery) (socket string, stop fu
 	}
 	if disc == nil {
 		disc = NoDiscovery()
+	}
+	if seed != nil {
+		seed(store)
 	}
 	node := NewNode(store, disc)
 

@@ -66,17 +66,27 @@ func DefaultSocket() string {
 
 var identityMu sync.Mutex
 
-// identityPath is DataDir()/identity.json.
-func identityPath() string { return filepath.Join(DataDir(), "identity.json") }
+// identityPath is <dir>/identity.json. It is a function of the store's
+// directory rather than of [DataDir], so a second instance pointed at a
+// directory of its own — a test, the screenshot tool, a daemon started
+// with -data — has an identity of its own too, and cannot overwrite the
+// one belonging to the copy the user actually runs.
+func identityPath(dir string) string { return filepath.Join(dir, "identity.json") }
 
-// LoadIdentity reads identity.json, creating one on first run: a fresh
-// random ID, the login name as a nickname and a colour derived from the ID
-// so the same peer is the same colour on every machine.
-func LoadIdentity() (Identity, error) {
+// LoadIdentity reads the identity in [DataDir].
+func LoadIdentity() (Identity, error) { return LoadIdentityFrom(DataDir()) }
+
+// SaveIdentity writes the identity in [DataDir].
+func SaveIdentity(id Identity) error { return SaveIdentityTo(DataDir(), id) }
+
+// LoadIdentityFrom reads dir/identity.json, creating one on first run: a
+// fresh random ID, the login name as a nickname and a colour derived from
+// the ID so the same peer is the same colour on every machine.
+func LoadIdentityFrom(dir string) (Identity, error) {
 	identityMu.Lock()
 	defer identityMu.Unlock()
 
-	path := identityPath()
+	path := identityPath(dir)
 	b, err := os.ReadFile(path)
 	if err == nil {
 		var id Identity
@@ -91,7 +101,7 @@ func LoadIdentity() (Identity, error) {
 	}
 
 	fresh := normalizeIdentity(Identity{ID: NewPeerID(), Nick: defaultNick()})
-	if err := saveIdentityLocked(fresh); err != nil {
+	if err := saveIdentityLocked(dir, fresh); err != nil {
 		// A read-only home should not stop the app: run with an identity
 		// that lives only for this process and say so.
 		return fresh, fmt.Errorf("chat: identity is not persisted: %w", err)
@@ -99,22 +109,22 @@ func LoadIdentity() (Identity, error) {
 	return fresh, nil
 }
 
-// SaveIdentity writes identity.json.
-func SaveIdentity(id Identity) error {
+// SaveIdentityTo writes dir/identity.json.
+func SaveIdentityTo(dir string, id Identity) error {
 	identityMu.Lock()
 	defer identityMu.Unlock()
-	return saveIdentityLocked(normalizeIdentity(id))
+	return saveIdentityLocked(dir, normalizeIdentity(id))
 }
 
-func saveIdentityLocked(id Identity) error {
-	if err := os.MkdirAll(DataDir(), 0o700); err != nil {
+func saveIdentityLocked(dir string, id Identity) error {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return err
 	}
 	b, err := json.MarshalIndent(id, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(identityPath(), append(b, '\n'), 0o600)
+	return writeFileAtomic(identityPath(dir), append(b, '\n'), 0o600)
 }
 
 func normalizeIdentity(id Identity) Identity {
@@ -241,4 +251,11 @@ func writeFileAtomic(path string, b []byte, mode os.FileMode) error {
 		return err
 	}
 	return os.Rename(tmp, path)
+}
+
+// AvatarColors is the palette a person may pick from in Preferences. It
+// is the same list every peer's colour is derived from, so a chosen
+// colour and a derived one are drawn the same way.
+func AvatarColors() []string {
+	return append([]string(nil), avatarPalette...)
 }

@@ -61,7 +61,7 @@ func NewStore(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "history"), 0o700); err != nil {
 		return nil, err
 	}
-	id, idErr := LoadIdentity()
+	id, idErr := LoadIdentityFrom(dir)
 	s.self = id
 	if err := s.loadRoster(); err != nil && !os.IsNotExist(err) {
 		return s, err
@@ -117,7 +117,7 @@ func (s *Store) SetSelf(id Identity) (Identity, error) {
 	if dir == "" {
 		return out, nil
 	}
-	return out, SaveIdentity(out)
+	return out, SaveIdentityTo(dir, out)
 }
 
 // NotifyPrefs is the shared notification setting.
@@ -321,7 +321,7 @@ func (s *Store) JoinRoom(name string) (string, bool, error) {
 	if dir == "" {
 		return name, true, nil
 	}
-	return name, true, SaveIdentity(self)
+	return name, true, SaveIdentityTo(dir, self)
 }
 
 // LeaveRoom drops a room. History stays on disk.
@@ -344,7 +344,7 @@ func (s *Store) LeaveRoom(name string) (bool, error) {
 	if !found || dir == "" {
 		return found, nil
 	}
-	return found, SaveIdentity(self)
+	return found, SaveIdentityTo(dir, self)
 }
 
 // --------------------------------------------------------------- messages
