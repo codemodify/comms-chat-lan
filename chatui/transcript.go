@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
 	"github.com/codemodify/paintengine2d"
 	"github.com/codemodify/uitoolkit/a11y"
 	"github.com/codemodify/uitoolkit/layout"
@@ -28,16 +28,16 @@ import (
 type transcript struct {
 	widget.Base
 
-	msgs []chatcore.Message
+	msgs []chat.Message
 	// nameOf and colorOf resolve a sender. They are supplied by the
 	// session, which is the only thing that knows the roster.
-	nameOf  func(chatcore.PeerID) string
-	colorOf func(chatcore.PeerID) string
+	nameOf  func(chat.PeerID) string
+	colorOf func(chat.PeerID) string
 	// transferOf resolves the live state of a file a message announced.
-	transferOf func(chatcore.TransferID) (chatcore.Transfer, bool)
+	transferOf func(chat.TransferID) (chat.Transfer, bool)
 	// onActivate is called when a row with a file on it is opened with
 	// Return or a double click.
-	onActivate func(chatcore.Message)
+	onActivate func(chat.Message)
 	// afterLayout runs once, after the next layout. The session uses it to
 	// pin a freshly loaded conversation to its newest line: how far the
 	// enclosing scroll view can scroll is not known until this widget has
@@ -56,7 +56,7 @@ type transcript struct {
 }
 
 type row struct {
-	msg   chatcore.Message
+	msg   chat.Message
 	lines []string
 	top   float32
 	h     float32
@@ -71,7 +71,7 @@ func newTranscript() *transcript {
 }
 
 // SetMessages replaces the conversation being shown.
-func (t *transcript) SetMessages(msgs []chatcore.Message) {
+func (t *transcript) SetMessages(msgs []chat.Message) {
 	t.msgs = msgs
 	if t.selected >= len(msgs) {
 		t.selected = -1
@@ -143,7 +143,7 @@ const (
 
 // displayBody is what a row's text is: the message, or a description of
 // the file it announced with whatever the transfer is doing right now.
-func displayBody(m chatcore.Message, lookup func(chatcore.TransferID) (chatcore.Transfer, bool)) string {
+func displayBody(m chat.Message, lookup func(chat.TransferID) (chat.Transfer, bool)) string {
 	if m.Transfer == nil {
 		return m.Body
 	}
@@ -156,26 +156,26 @@ func displayBody(m chatcore.Message, lookup func(chatcore.TransferID) (chatcore.
 		return line
 	}
 	switch tr.State {
-	case chatcore.TransferIncoming:
+	case chat.TransferIncoming:
 		return line + "  — offered, waiting for you"
-	case chatcore.TransferOffered:
+	case chat.TransferOffered:
 		return line + "  — offered, waiting for them"
-	case chatcore.TransferRunning:
+	case chat.TransferRunning:
 		pct := 0
 		if tr.Size > 0 {
 			pct = int(tr.Done * 100 / tr.Size)
 		}
 		return fmt.Sprintf("%s  — %d%%", line, pct)
-	case chatcore.TransferDone:
+	case chat.TransferDone:
 		if tr.Incoming && tr.Path != "" {
 			return line + "  — saved to " + tr.Path
 		}
 		return line + "  — sent"
-	case chatcore.TransferDeclined:
+	case chat.TransferDeclined:
 		return line + "  — declined"
-	case chatcore.TransferCancelled:
+	case chat.TransferCancelled:
 		return line + "  — cancelled"
-	case chatcore.TransferFailed:
+	case chat.TransferFailed:
 		return line + "  — failed: " + tr.Error
 	}
 	return line
@@ -330,7 +330,7 @@ func (t *transcript) Paint(ctx *paintengine2d.Context) {
 	}
 }
 
-func (t *transcript) senderName(m chatcore.Message) string {
+func (t *transcript) senderName(m chat.Message) string {
 	if m.FromNick != "" {
 		return m.FromNick
 	}
@@ -339,40 +339,40 @@ func (t *transcript) senderName(m chatcore.Message) string {
 			return n
 		}
 	}
-	return chatcore.ShortID(m.From)
+	return chat.ShortID(m.From)
 }
 
-func (t *transcript) senderColor(m chatcore.Message) string {
+func (t *transcript) senderColor(m chat.Message) string {
 	if t.colorOf != nil {
 		if c := t.colorOf(m.From); c != "" {
 			return c
 		}
 	}
-	return chatcore.ColorForID(m.From)
+	return chat.ColorForID(m.From)
 }
 
 // deliveryNote is what a message we sent says about itself. A message
 // somebody else sent says nothing: we cannot know, and claiming to would
 // be a lie in the one place it matters.
-func deliveryNote(m chatcore.Message) string {
+func deliveryNote(m chat.Message) string {
 	if !m.Mine {
 		return ""
 	}
 	switch m.State {
-	case chatcore.StateQueued:
+	case chat.StateQueued:
 		return "waiting for them"
-	case chatcore.StateSending:
+	case chat.StateSending:
 		return "sending"
-	case chatcore.StateDelivered:
+	case chat.StateDelivered:
 		return "delivered"
-	case chatcore.StateFailed:
+	case chat.StateFailed:
 		return "not delivered"
 	}
 	return ""
 }
 
-func deliveryColor(m chatcore.Message, pal style.Palette) paintengine2d.Color {
-	if m.Mine && m.State == chatcore.StateFailed {
+func deliveryColor(m chat.Message, pal style.Palette) paintengine2d.Color {
+	if m.Mine && m.State == chat.StateFailed {
 		return pal.Danger
 	}
 	return pal.TextMuted

@@ -8,7 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
+	"github.com/codemodify/comms-chat-lan/chatclientd"
 	"github.com/codemodify/uitoolkit"
 	"github.com/codemodify/uitoolkit/a11y"
 	"github.com/codemodify/uitoolkit/app"
@@ -26,7 +27,7 @@ import (
 
 // openWindow is a whole application: a seeded daemon, a headless window
 // and the real content.
-func openWindow(t *testing.T, look style.LookAndFeel) (*app.Application, *app.Window, *chatcore.Client) {
+func openWindow(t *testing.T, look style.LookAndFeel) (*app.Application, *app.Window, *chat.Client) {
 	t.Helper()
 	t.Setenv("UITK_CHAT_HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -35,12 +36,12 @@ func openWindow(t *testing.T, look style.LookAndFeel) (*app.Application, *app.Wi
 	t.Setenv("UITK_NOTIFY", "off")
 
 	ctx, cancel := context.WithCancel(context.Background())
-	socket, stop, err := chatcore.StartSample(ctx)
+	socket, stop, err := chatclientd.StartSample(ctx)
 	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	cli, err := chatcore.DialWait(socket, 3*time.Second)
+	cli, err := chat.DialWait(socket, 3*time.Second)
 	if err != nil {
 		stop()
 		cancel()
@@ -116,14 +117,14 @@ func TestTheWindowIsAccessible(t *testing.T) {
 // reader can walk the conversation rather than being told "list".
 func TestEveryMessageIsAnAccessibleItem(t *testing.T) {
 	a, w, cli := openWindow(t, style.DarkLook())
-	msgs, err := cli.Messages(chatcore.RoomConv("general"), 0)
+	msgs, err := cli.Messages(chat.RoomConv("general"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(msgs) == 0 {
 		t.Fatal("the sample store has no messages")
 	}
-	sessionOf(t, w).selectConv(chatcore.RoomConv("general"))
+	sessionOf(t, w).selectConv(chat.RoomConv("general"))
 	a.PumpOnce()
 
 	var items []string
@@ -194,7 +195,7 @@ func TestTheWindowShowsTheConversationAndSends(t *testing.T) {
 	if s.list.Count < 2 {
 		t.Fatalf("%d conversations in the sidebar, want at least 2", s.list.Count)
 	}
-	s.selectConv(chatcore.RoomConv("general"))
+	s.selectConv(chat.RoomConv("general"))
 	a.PumpOnce()
 	if len(s.script.rows) == 0 {
 		t.Fatal("the transcript is empty")
@@ -205,7 +206,7 @@ func TestTheWindowShowsTheConversationAndSends(t *testing.T) {
 	s.DrainDaemonEvents()
 	a.PumpOnce()
 
-	msgs, err := cli.Messages(chatcore.RoomConv("general"), 0)
+	msgs, err := cli.Messages(chat.RoomConv("general"), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -224,19 +225,19 @@ func TestAFileOfferPutsUpAnAcceptStrip(t *testing.T) {
 	a, w, _ := openWindow(t, style.DarkLook())
 	s := sessionOf(t, w)
 
-	conv := chatcore.DirectConv("11112222333344445555666677778888")
+	conv := chat.DirectConv("11112222333344445555666677778888")
 	s.selectConv(conv)
 	a.PumpOnce()
 	if s.offerBar.Visible() {
 		t.Fatal("the accept strip is up with no offer waiting")
 	}
 
-	s.onEvent(chatcore.NodeEvent{
-		Kind: chatcore.EventTransfer, Conv: conv,
-		Transfer: &chatcore.Transfer{
+	s.onEvent(chat.Event{
+		Kind: chat.EventTransfer, Conv: conv,
+		Transfer: &chat.Transfer{
 			ID: "t1", Conv: conv, Peer: "11112222333344445555666677778888",
 			Name: "rack-1.jpg", Size: 1 << 20, Incoming: true,
-			State: chatcore.TransferIncoming, At: time.Now(),
+			State: chat.TransferIncoming, At: time.Now(),
 		},
 	})
 	s.DrainDaemonEvents()

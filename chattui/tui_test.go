@@ -6,23 +6,25 @@ import (
 	"testing"
 	"time"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
+	"github.com/codemodify/comms-chat-lan/chatclientd"
+	"github.com/codemodify/comms-chat-lan/chatwire"
 	"github.com/gdamore/tcell/v2"
 )
 
 // newTestUI starts a whole daemon in this process, with discovery off so
 // the test never touches the real network, and points a terminal UI at it.
-func newTestUI(t *testing.T) (*UI, *chatcore.Client) {
+func newTestUI(t *testing.T) (*UI, *chat.Client) {
 	t.Helper()
 	t.Setenv("UITK_CHAT_HOME", t.TempDir())
 
 	ctx, cancel := context.WithCancel(context.Background())
-	socket, stop, err := chatcore.StartInProcess(ctx, chatcore.NoDiscovery())
+	socket, stop, err := chatclientd.StartInProcess(ctx, chatwire.NoDiscovery())
 	if err != nil {
 		cancel()
 		t.Fatal(err)
 	}
-	cli, err := chatcore.DialWait(socket, 3*time.Second)
+	cli, err := chat.DialWait(socket, 3*time.Second)
 	if err != nil {
 		stop()
 		cancel()
@@ -42,7 +44,7 @@ func TestTheTerminalUIShowsTheConversationItIsGiven(t *testing.T) {
 	if _, err := cli.JoinRoom("general"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.Send(chatcore.RoomConv("general"), "good morning"); err != nil {
+	if _, err := cli.Send(chat.RoomConv("general"), "good morning"); err != nil {
 		t.Fatal(err)
 	}
 	u.reloadAll()
@@ -75,10 +77,10 @@ func TestSlashCommandsReachTheDaemon(t *testing.T) {
 		t.Fatalf("/nick did not change the nickname: %#v %v", id, err)
 	}
 
-	u.selectConv(chatcore.RoomConv("general"))
+	u.selectConv(chat.RoomConv("general"))
 	u.selectIndex(0)
 	u.submit("hello everyone")
-	msgs, err := cli.Messages(chatcore.RoomConv("general"), 0)
+	msgs, err := cli.Messages(chat.RoomConv("general"), 0)
 	if err != nil || len(msgs) != 1 || msgs[0].Body != "hello everyone" {
 		t.Fatalf("the message did not reach the daemon: %#v %v", msgs, err)
 	}
@@ -92,14 +94,14 @@ func TestSlashCommandsReachTheDaemon(t *testing.T) {
 func TestAnUnknownCommandSaysSoRatherThanSendingIt(t *testing.T) {
 	u, cli := newTestUI(t)
 	u.submit("/join general")
-	u.selectConv(chatcore.RoomConv("general"))
+	u.selectConv(chat.RoomConv("general"))
 	u.selectIndex(0)
 
 	u.submit("/nonsense")
 	if got := u.log.GetText(true); !strings.Contains(got, "no such command") {
 		t.Fatalf("no complaint about an unknown command:\n%s", got)
 	}
-	msgs, _ := cli.Messages(chatcore.RoomConv("general"), 0)
+	msgs, _ := cli.Messages(chat.RoomConv("general"), 0)
 	if len(msgs) != 0 {
 		t.Fatalf("a mistyped command was sent to the room as a message: %#v", msgs)
 	}
@@ -113,7 +115,7 @@ func TestTheTerminalUIDrawsOnASimulatedTerminal(t *testing.T) {
 	if _, err := cli.JoinRoom("standup"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := cli.Send(chatcore.RoomConv("standup"), "morning"); err != nil {
+	if _, err := cli.Send(chat.RoomConv("standup"), "morning"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -220,16 +222,16 @@ func TestHumanSizeReadsLikeASize(t *testing.T) {
 }
 
 func TestAMessageLineShowsWhetherItGotThere(t *testing.T) {
-	self := chatcore.PeerID("aaaa")
-	base := chatcore.Message{
+	self := chat.PeerID("aaaa")
+	base := chat.Message{
 		ID: "m", From: self, Mine: true, FromNick: "sam",
 		Body: "hello", Sent: time.Now(),
 	}
-	for state, want := range map[chatcore.MessageState]string{
-		chatcore.StateQueued:    "waiting",
-		chatcore.StateSending:   "sending",
-		chatcore.StateFailed:    "not delivered",
-		chatcore.StateDelivered: "✓",
+	for state, want := range map[chat.MessageState]string{
+		chat.StateQueued:    "waiting",
+		chat.StateSending:   "sending",
+		chat.StateFailed:    "not delivered",
+		chat.StateDelivered: "✓",
 	} {
 		m := base
 		m.State = state
@@ -240,7 +242,7 @@ func TestAMessageLineShowsWhetherItGotThere(t *testing.T) {
 	// A message from somebody else carries no delivery mark: we cannot
 	// know, and pretending would be a lie in the one place it matters.
 	theirs := base
-	theirs.From, theirs.Mine, theirs.State = "bbbb", false, chatcore.StateDelivered
+	theirs.From, theirs.Mine, theirs.State = "bbbb", false, chat.StateDelivered
 	if got := messageLine(theirs, self, nil); strings.Contains(got, "✓") {
 		t.Errorf("an incoming message claims delivery: %q", got)
 	}

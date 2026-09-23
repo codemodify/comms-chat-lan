@@ -3,7 +3,7 @@ package chatui
 import (
 	"os"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
 	"github.com/codemodify/uitoolkit/app"
 	"github.com/codemodify/uitoolkit/platform"
 	"github.com/codemodify/uitoolkit/style"
@@ -31,7 +31,7 @@ var newNotifier = func(a *app.Application) notifier {
 // notification preferences live there, so both front ends agree); the
 // window decides only whether to put it on this desktop.
 func (s *session) notify(title, body string) {
-	if s.notifier == nil || os.Getenv(chatcore.EnvNoNotify) != "" {
+	if s.notifier == nil || os.Getenv(chat.EnvNoNotify) != "" {
 		return
 	}
 	prefs, err := s.cli.NotifyPrefs()

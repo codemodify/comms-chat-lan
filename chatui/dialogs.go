@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
 	"github.com/codemodify/uitoolkit/widgets"
 )
 
@@ -21,13 +21,13 @@ func (s *session) showPreferences() {
 
 	prefs, err := s.cli.NotifyPrefs()
 	if err != nil {
-		prefs = chatcore.DefaultNotifyPrefs()
+		prefs = chat.DefaultNotifyPrefs()
 	}
 
 	nick := widgets.NewTextField(self.Nick, "your name on this network", nil)
 	nick.SetAccessibleName("Nickname")
 
-	colors := chatcore.AvatarColors()
+	colors := chat.AvatarColors()
 	colorNames := make([]string, len(colors))
 	selected := 0
 	for i, c := range colors {
@@ -39,7 +39,7 @@ func (s *session) showPreferences() {
 	colorBox := widgets.NewComboBox(colorNames, selected, nil)
 	colorBox.SetAccessibleName("Avatar colour")
 
-	presences := []chatcore.Presence{chatcore.PresenceOnline, chatcore.PresenceAway, chatcore.PresenceBusy}
+	presences := []chat.Presence{chat.PresenceOnline, chat.PresenceAway, chat.PresenceBusy}
 	presenceNames := []string{"Online", "Away", "Busy"}
 	presenceAt := 0
 	for i, p := range presences {
@@ -84,7 +84,7 @@ func (s *session) showPreferences() {
 		if kib, err := strconv.ParseInt(strings.TrimSpace(auto.Text), 10, 64); err == nil && kib >= 0 {
 			next.AutoAcceptFiles = kib * 1024
 		}
-		nextPrefs := chatcore.NotifyPrefs{
+		nextPrefs := chat.NotifyPrefs{
 			Enabled: notify.Checked, Desktop: desktop.Checked,
 			DirectOnly: direct.Checked, Mentions: mention.Checked,
 		}
@@ -98,7 +98,7 @@ func (s *session) showPreferences() {
 				s.warn("Preferences were not saved", err.Error())
 				return
 			}
-			if id, ok := v.(chatcore.Identity); ok {
+			if id, ok := v.(chat.Identity); ok {
 				s.mu.Lock()
 				s.self = id
 				s.mu.Unlock()
@@ -155,9 +155,9 @@ func (s *session) showPeers() {
 	}
 	if len(peers) == 0 {
 		s.info("Nobody else is here yet",
-			"Peers appear a few seconds after they start.\n\n"+
-				"If nobody ever appears, multicast may be blocked on this network, or a firewall may be dropping UDP port "+
-				strconv.Itoa(chatcore.BeaconPort)+". See docs/protocol.md.")
+			"Everyone enrolled with the same server appears a few seconds after they start.\n\n"+
+				"If nobody ever appears, this machine may not have found the server. "+
+				"Check the status bar, and if there is no server on this segment, start the daemon with -server <host>. See docs/protocol.md.")
 		return
 	}
 	sort.Slice(peers, func(i, j int) bool { return peers[i].DisplayName() < peers[j].DisplayName() })
@@ -170,9 +170,6 @@ func (s *session) showPeers() {
 		}
 		if len(p.Rooms) > 0 {
 			b.WriteString("  in #" + strings.Join(p.Rooms, " #"))
-		}
-		if !p.Known {
-			b.WriteString("\n    connected without ever announcing itself")
 		}
 		if p.Blocked {
 			b.WriteString("\n    blocked")
@@ -210,18 +207,19 @@ What it does NOT do:
     plain sight. Anyone who can watch this network — another machine on
     the same wifi, whoever runs the switch — can read every word.
 
-  • It does not authenticate anybody. A peer's name, colour and identity
-    are whatever that peer says they are. Nothing stops somebody calling
-    themselves by your colleague's name.
+  • It does not authenticate anybody. Enrolment with the server is open:
+    whoever can reach it is in. A name, a colour and an identity are
+    whatever the client claiming them says they are, and nothing stops
+    somebody calling themselves by your colleague's name.
 
-  • It does not protect you from the network. Any machine that can reach
-    you can open a conversation with you and offer you files.
+  • It does not protect you from the network. Anyone who can reach the
+    server can join every room, be sent your one-to-one messages if they
+    claim the right identity, and offer you files.
 
 What it does do:
 
-  • Nothing leaves this machine until you send it. There is no server,
-    no account and no cloud; the app talks to the machines on your LAN
-    and to nothing else.
+  • Nothing leaves this machine until you send it, and then it goes to
+    one server on your own network. There is no account and no cloud.
 
   • Nothing is written to disk from a file offer until you accept it,
     and an accepted file always lands under a fresh name inside your
@@ -230,6 +228,9 @@ What it does do:
   • The daemon's socket is yours alone: it is mode 0600 and every
     connection is checked against your own user id, so another user on
     this machine cannot read your history or send messages as you.
+
+  • Your history is also here, not only on the server: you can read a
+    conversation with the server switched off.
 
   • A file's checksum is verified on arrival. That catches a truncated
     or corrupted transfer. It is not a security check: somebody who can
@@ -241,13 +242,20 @@ Treat it the way you would treat talking out loud in the same room.
 
 func (s *session) showAbout() {
 	st, err := s.cli.Status()
-	body := "comms-chat-lan\n\nLAN chat with no server and no accounts.\nBuilt on uitoolkit — https://github.com/codemodify/uitoolkit\n"
+	body := "comms-chat-lan\n\nLAN chat with one server and no accounts.\nBuilt on uitoolkit — https://github.com/codemodify/uitoolkit\n"
 	if err == nil {
-		body += fmt.Sprintf("\ndaemon      %s\nlistening   %s\ndiscovery   %s\nstorage     %s\nyour id     %s\n",
-			st.Version, st.Listen, st.Discovery, storageName(st.DataDir), st.Self.ID)
+		body += fmt.Sprintf("\ndaemon      %s\nserver      %s (%s)\ndiscovery   %s\nstorage     %s\nyour id     %s\n",
+			st.Version, st.Server, connectedWord(st.Connected), st.Discovery, storageName(st.DataDir), st.Self.ID)
 	}
-	body += "\nDiscovery is a UDP beacon of this application's own, not mDNS: other\ncopies of this app can see you, and avahi-browse cannot."
+	body += "\nThe server announces itself with a UDP beacon of this application's own,\nnot mDNS: this application's clients can find it, and avahi-browse cannot."
 	s.showText("About", body)
+}
+
+func connectedWord(up bool) string {
+	if up {
+		return "connected"
+	}
+	return "not connected — showing what this machine already has"
 }
 
 func storageName(dir string) string {

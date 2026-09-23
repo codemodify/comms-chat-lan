@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
 	"github.com/codemodify/uitoolkit/app"
 	"github.com/codemodify/uitoolkit/platform"
 	"github.com/codemodify/uitoolkit/widget"
@@ -26,7 +26,7 @@ import (
 type session struct {
 	app *app.Application
 	win *app.Window
-	cli *chatcore.Client
+	cli *chat.Client
 
 	// Widgets.
 	root      widget.Component
@@ -46,12 +46,12 @@ type session struct {
 	menu      *widgets.MenuBar
 
 	mu        sync.Mutex
-	self      chatcore.Identity
-	convs     []chatcore.Conversation
-	current   chatcore.ConversationID
-	peers     map[chatcore.PeerID]chatcore.Peer
-	typing    map[chatcore.ConversationID][]chatcore.PeerID
-	transfers map[chatcore.TransferID]chatcore.Transfer
+	self      chat.Identity
+	convs     []chat.Conversation
+	current   chat.ConversationID
+	peers     map[chat.PeerID]chat.Peer
+	typing    map[chat.ConversationID][]chat.PeerID
+	transfers map[chat.TransferID]chat.Transfer
 	daemonUp  bool
 	note      string
 	// pending is work that arrived from the daemon while no event loop
@@ -68,12 +68,12 @@ type session struct {
 // the application's, so the window is whatever theme pack the toolkit
 // resolved (and whatever UITK_THEME asked for): nothing here paints a
 // colour of its own except the peer avatars, which come from the palette.
-func Open(a *app.Application, win *app.Window, cli *chatcore.Client) widget.Component {
+func Open(a *app.Application, win *app.Window, cli *chat.Client) widget.Component {
 	s := &session{
 		app: a, win: win, cli: cli,
-		peers:     map[chatcore.PeerID]chatcore.Peer{},
-		typing:    map[chatcore.ConversationID][]chatcore.PeerID{},
-		transfers: map[chatcore.TransferID]chatcore.Transfer{},
+		peers:     map[chat.PeerID]chat.Peer{},
+		typing:    map[chat.ConversationID][]chat.PeerID{},
+		transfers: map[chat.TransferID]chat.Transfer{},
 		daemonUp:  true,
 	}
 	s.build()
@@ -223,9 +223,9 @@ func (s *session) menus() []*widgets.Menu {
 			widgets.Item("&Unblock This Peer", func() { s.setBlocked(false) }),
 		),
 		widgets.NewMenu("&Status",
-			widgets.RadioItem("&Online", "presence", true, func() { s.setPresence(chatcore.PresenceOnline) }),
-			widgets.RadioItem("&Away", "presence", false, func() { s.setPresence(chatcore.PresenceAway) }),
-			widgets.RadioItem("&Busy", "presence", false, func() { s.setPresence(chatcore.PresenceBusy) }),
+			widgets.RadioItem("&Online", "presence", true, func() { s.setPresence(chat.PresenceOnline) }),
+			widgets.RadioItem("&Away", "presence", false, func() { s.setPresence(chat.PresenceAway) }),
+			widgets.RadioItem("&Busy", "presence", false, func() { s.setPresence(chat.PresenceBusy) }),
 		),
 		widgets.NewMenu("&Help",
 			widgets.Item("&Who Is Here", s.showPeers),
@@ -239,9 +239,9 @@ func (s *session) menus() []*widgets.Menu {
 
 // ------------------------------------------------------------- the events
 
-func (s *session) onEvent(ev chatcore.NodeEvent) {
+func (s *session) onEvent(ev chat.Event) {
 	switch ev.Kind {
-	case chatcore.EventMessage, chatcore.EventState:
+	case chat.EventMessage, chat.EventState:
 		s.post(func() {
 			s.reloadConvs()
 			if ev.Conv == s.currentConv() {
@@ -251,14 +251,14 @@ func (s *session) onEvent(ev chatcore.NodeEvent) {
 				go s.markReadQuietly(ev.Conv)
 			}
 		})
-	case chatcore.EventPeers:
+	case chat.EventPeers:
 		s.post(func() {
 			s.reloadPeers()
 			s.reloadConvs()
 			s.drawHeader()
 			s.drawStatus()
 		})
-	case chatcore.EventTyping:
+	case chat.EventTyping:
 		s.post(func() {
 			s.mu.Lock()
 			who := dropPeer(s.typing[ev.Conv], ev.Peer)
@@ -269,7 +269,7 @@ func (s *session) onEvent(ev chatcore.NodeEvent) {
 			s.mu.Unlock()
 			s.drawHeader()
 		})
-	case chatcore.EventTransfer:
+	case chat.EventTransfer:
 		s.post(func() {
 			if ev.Transfer != nil {
 				s.mu.Lock()
@@ -279,9 +279,9 @@ func (s *session) onEvent(ev chatcore.NodeEvent) {
 			s.drawOfferBar()
 			s.reloadMessages()
 		})
-	case chatcore.EventNotify:
+	case chat.EventNotify:
 		s.post(func() { s.notify(ev.Title, ev.Body) })
-	case chatcore.EventStatus:
+	case chat.EventStatus:
 		s.post(func() {
 			s.mu.Lock()
 			s.note = ev.Text
@@ -291,8 +291,8 @@ func (s *session) onEvent(ev chatcore.NodeEvent) {
 	}
 }
 
-func dropPeer(list []chatcore.PeerID, id chatcore.PeerID) []chatcore.PeerID {
-	out := make([]chatcore.PeerID, 0, len(list))
+func dropPeer(list []chat.PeerID, id chat.PeerID) []chat.PeerID {
+	out := make([]chat.PeerID, 0, len(list))
 	for _, p := range list {
 		if p != id {
 			out = append(out, p)
@@ -322,7 +322,7 @@ func (s *session) reloadPeers() {
 	if err != nil {
 		return
 	}
-	m := make(map[chatcore.PeerID]chatcore.Peer, len(peers))
+	m := make(map[chat.PeerID]chat.Peer, len(peers))
 	for _, p := range peers {
 		m[p.ID] = p
 	}
@@ -336,7 +336,7 @@ func (s *session) reloadTransfers() {
 	if err != nil {
 		return
 	}
-	m := make(map[chatcore.TransferID]chatcore.Transfer, len(list))
+	m := make(map[chat.TransferID]chat.Transfer, len(list))
 	for _, tr := range list {
 		m[tr.ID] = tr
 	}
@@ -398,13 +398,13 @@ func (s *session) convLabel(i int) string {
 // presenceMark is a word, not a coloured dot. A dot in a list row would
 // have to be painted, and in a high-contrast or monochrome theme pack it
 // would be the only thing in the window carrying meaning by colour alone.
-func presenceMark(p chatcore.Presence) string {
+func presenceMark(p chat.Presence) string {
 	switch p.Valid() {
-	case chatcore.PresenceOnline:
+	case chat.PresenceOnline:
 		return "•"
-	case chatcore.PresenceAway:
+	case chat.PresenceAway:
 		return "◦"
-	case chatcore.PresenceBusy:
+	case chat.PresenceBusy:
 		return "⊘"
 	default:
 		return " "
@@ -463,11 +463,6 @@ func (s *session) drawHeader() {
 		if p.Addr != "" {
 			parts = append(parts, p.Addr)
 		}
-		if !p.Known {
-			// Anyone on the LAN can connect to us. If we never heard this
-			// peer announce itself, the window says so.
-			parts = append(parts, "this peer connected without announcing itself")
-		}
 		if p.Blocked {
 			parts = append(parts, "blocked")
 		}
@@ -478,9 +473,9 @@ func (s *session) drawHeader() {
 	s.subtitle.SetText(strings.Join(parts, "  ·  "))
 }
 
-func (s *session) typingNames(conv chatcore.ConversationID) string {
+func (s *session) typingNames(conv chat.ConversationID) string {
 	s.mu.Lock()
-	ids := append([]chatcore.PeerID(nil), s.typing[conv]...)
+	ids := append([]chat.PeerID(nil), s.typing[conv]...)
 	s.mu.Unlock()
 	if len(ids) == 0 {
 		return ""
@@ -498,7 +493,7 @@ func (s *session) drawStatus() {
 	self, up, note := s.self, s.daemonUp, s.note
 	online := 0
 	for _, p := range s.peers {
-		if p.Presence.Valid() != chatcore.PresenceOffline {
+		if p.Presence.Valid() != chat.PresenceOffline {
 			online++
 		}
 	}
@@ -537,13 +532,13 @@ func (s *session) drawOfferBar() {
 	s.win.RequestLayout()
 }
 
-func (s *session) pendingOffer(conv chatcore.ConversationID) (chatcore.Transfer, bool) {
+func (s *session) pendingOffer(conv chat.ConversationID) (chat.Transfer, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var best chatcore.Transfer
+	var best chat.Transfer
 	found := false
 	for _, tr := range s.transfers {
-		if tr.State != chatcore.TransferIncoming || (conv != "" && tr.Conv != conv) {
+		if tr.State != chat.TransferIncoming || (conv != "" && tr.Conv != conv) {
 			continue
 		}
 		if !found || tr.At.Before(best.At) {
@@ -555,7 +550,7 @@ func (s *session) pendingOffer(conv chatcore.ConversationID) (chatcore.Transfer,
 
 // ---------------------------------------------------------------- actions
 
-func (s *session) currentConv() chatcore.ConversationID {
+func (s *session) currentConv() chat.ConversationID {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.current
@@ -581,7 +576,7 @@ func (s *session) selectIndex(i int) {
 	go s.markReadQuietly(conv)
 }
 
-func (s *session) selectConv(id chatcore.ConversationID) {
+func (s *session) selectConv(id chat.ConversationID) {
 	s.mu.Lock()
 	for i, c := range s.convs {
 		if c.ID == id {
@@ -684,7 +679,7 @@ func (s *session) declineOffer() {
 // activateMessage is Return on a transcript row. On a row that announced a
 // file it answers the offer; on anything else it does nothing, which is
 // better than inventing a behaviour.
-func (s *session) activateMessage(m chatcore.Message) {
+func (s *session) activateMessage(m chat.Message) {
 	if m.Transfer == nil {
 		return
 	}
@@ -692,10 +687,10 @@ func (s *session) activateMessage(m chatcore.Message) {
 	if !ok {
 		return
 	}
-	if tr.State == chatcore.TransferIncoming {
+	if tr.State == chat.TransferIncoming {
 		widgets.Confirm(s.root, "Accept this file?",
 			fmt.Sprintf("%s (%s) from %s.\n\nIt will be saved in %s.",
-				tr.Name, humanSize(tr.Size), s.peerName(tr.Peer), chatcore.DownloadDir()),
+				tr.Name, humanSize(tr.Size), s.peerName(tr.Peer), chat.DownloadDir()),
 			func(yes bool) {
 				if yes {
 					s.acceptOffer()
@@ -705,12 +700,12 @@ func (s *session) activateMessage(m chatcore.Message) {
 			})
 		return
 	}
-	if tr.State == chatcore.TransferDone && tr.Path != "" {
+	if tr.State == chat.TransferDone && tr.Path != "" {
 		s.win.OpenURI("file://"+tr.Path, func(error) {})
 	}
 }
 
-func (s *session) markRead(conv chatcore.ConversationID) {
+func (s *session) markRead(conv chat.ConversationID) {
 	if conv == "" {
 		return
 	}
@@ -719,7 +714,7 @@ func (s *session) markRead(conv chatcore.ConversationID) {
 
 // markReadQuietly is the same thing without a UI hop, for the case where
 // a message arrives in the conversation already on screen.
-func (s *session) markReadQuietly(conv chatcore.ConversationID) {
+func (s *session) markReadQuietly(conv chat.ConversationID) {
 	if conv == "" {
 		return
 	}
@@ -748,7 +743,7 @@ func (s *session) promptJoinRoom() {
 			}
 			s.reloadConvs()
 			if room, ok := v.(string); ok {
-				s.selectConv(chatcore.RoomConv(room))
+				s.selectConv(chat.RoomConv(room))
 			}
 		})
 	}
@@ -806,20 +801,20 @@ func (s *session) setBlocked(blocked bool) {
 	})
 }
 
-func convPeer(c chatcore.ConversationID) chatcore.PeerID {
+func convPeer(c chat.ConversationID) chat.PeerID {
 	if c.IsRoom() || !strings.HasPrefix(string(c), "peer:") {
 		return ""
 	}
-	return chatcore.PeerID(strings.TrimPrefix(string(c), "peer:"))
+	return chat.PeerID(strings.TrimPrefix(string(c), "peer:"))
 }
 
-func (s *session) setPresence(p chatcore.Presence) {
+func (s *session) setPresence(p chat.Presence) {
 	s.async(func() (any, error) { return s.cli.SetPresence(p) }, func(v any, err error) {
 		if err != nil {
 			s.warn("Presence was not changed", err.Error())
 			return
 		}
-		if id, ok := v.(chatcore.Identity); ok {
+		if id, ok := v.(chat.Identity); ok {
 			s.mu.Lock()
 			s.self = id
 			s.mu.Unlock()
@@ -861,7 +856,7 @@ func (s *session) quit() {
 
 // ---------------------------------------------------------------- helpers
 
-func (s *session) peerName(id chatcore.PeerID) string {
+func (s *session) peerName(id chat.PeerID) string {
 	s.mu.Lock()
 	p, ok := s.peers[id]
 	self := s.self
@@ -872,10 +867,10 @@ func (s *session) peerName(id chatcore.PeerID) string {
 	if ok {
 		return p.DisplayName()
 	}
-	return chatcore.ShortID(id)
+	return chat.ShortID(id)
 }
 
-func (s *session) peerColor(id chatcore.PeerID) string {
+func (s *session) peerColor(id chat.PeerID) string {
 	s.mu.Lock()
 	p, ok := s.peers[id]
 	self := s.self
@@ -886,10 +881,10 @@ func (s *session) peerColor(id chatcore.PeerID) string {
 	if ok && p.Color != "" {
 		return p.Color
 	}
-	return chatcore.ColorForID(id)
+	return chat.ColorForID(id)
 }
 
-func (s *session) transfer(id chatcore.TransferID) (chatcore.Transfer, bool) {
+func (s *session) transfer(id chat.TransferID) (chat.Transfer, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	tr, ok := s.transfers[id]

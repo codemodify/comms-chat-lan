@@ -15,7 +15,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/codemodify/comms-chat-lan/chatcore"
+	"github.com/codemodify/comms-chat-lan/chat"
 	"github.com/gdamore/tcell/v2"
 	"github.com/rivo/tview"
 )
@@ -23,7 +23,7 @@ import (
 // UI is the whole terminal front end.
 type UI struct {
 	app    *tview.Application
-	client *chatcore.Client
+	client *chat.Client
 
 	pages    *tview.Pages
 	list     *tview.List
@@ -33,11 +33,11 @@ type UI struct {
 	headline *tview.TextView
 
 	mu       sync.Mutex
-	convs    []chatcore.Conversation
-	current  chatcore.ConversationID
-	self     chatcore.Identity
-	typing   map[chatcore.ConversationID][]chatcore.PeerID
-	peerName map[chatcore.PeerID]string
+	convs    []chat.Conversation
+	current  chat.ConversationID
+	self     chat.Identity
+	typing   map[chat.ConversationID][]chat.PeerID
+	peerName map[chat.PeerID]string
 	up       bool
 	// lastTyping throttles the typing.set calls: one keystroke is not one
 	// round trip, and over ssh that matters.
@@ -45,12 +45,12 @@ type UI struct {
 }
 
 // New builds the terminal UI over a connected client.
-func New(cli *chatcore.Client) *UI {
+func New(cli *chat.Client) *UI {
 	u := &UI{
 		app:      tview.NewApplication(),
 		client:   cli,
-		typing:   map[chatcore.ConversationID][]chatcore.PeerID{},
-		peerName: map[chatcore.PeerID]string{},
+		typing:   map[chat.ConversationID][]chat.PeerID{},
+		peerName: map[chat.PeerID]string{},
 		up:       true,
 	}
 	u.build()
@@ -134,22 +134,22 @@ func (u *UI) post(fn func()) {
 
 // ------------------------------------------------------------------ events
 
-func (u *UI) onEvent(ev chatcore.NodeEvent) {
+func (u *UI) onEvent(ev chat.Event) {
 	switch ev.Kind {
-	case chatcore.EventMessage, chatcore.EventState:
+	case chat.EventMessage, chat.EventState:
 		u.post(func() {
 			u.reloadConvs()
 			if ev.Conv == u.currentConv() {
 				u.reloadMessages()
 			}
 		})
-	case chatcore.EventPeers:
+	case chat.EventPeers:
 		u.post(func() {
 			u.reloadConvs()
 			u.drawStatus()
 			u.drawHeadline()
 		})
-	case chatcore.EventTyping:
+	case chat.EventTyping:
 		u.mu.Lock()
 		who := u.typing[ev.Conv]
 		who = removePeer(who, ev.Peer)
@@ -159,14 +159,14 @@ func (u *UI) onEvent(ev chatcore.NodeEvent) {
 		u.typing[ev.Conv] = who
 		u.mu.Unlock()
 		u.post(u.drawHeadline)
-	case chatcore.EventTransfer:
+	case chat.EventTransfer:
 		u.post(func() {
 			if ev.Transfer != nil {
 				u.note(transferLine(*ev.Transfer))
 			}
 			u.reloadMessages()
 		})
-	case chatcore.EventNotify:
+	case chat.EventNotify:
 		// The terminal's own notification: a bell, once, and a line in
 		// the status bar. Anything more elaborate belongs to a terminal
 		// emulator, not to us.
@@ -177,14 +177,14 @@ func (u *UI) onEvent(ev chatcore.NodeEvent) {
 	}
 }
 
-func removePeer(list []chatcore.PeerID, id chatcore.PeerID) []chatcore.PeerID {
+func removePeer(list []chat.PeerID, id chat.PeerID) []chat.PeerID {
 	out := list[:0]
 	for _, p := range list {
 		if p != id {
 			out = append(out, p)
 		}
 	}
-	return append([]chatcore.PeerID(nil), out...)
+	return append([]chat.PeerID(nil), out...)
 }
 
 // ------------------------------------------------------------------ keys
@@ -261,7 +261,7 @@ func (u *UI) moveSelection(delta int) {
 }
 
 func (u *UI) cyclePresence() {
-	order := []chatcore.Presence{chatcore.PresenceOnline, chatcore.PresenceAway, chatcore.PresenceBusy}
+	order := []chat.Presence{chat.PresenceOnline, chat.PresenceAway, chat.PresenceBusy}
 	u.mu.Lock()
 	cur := u.self.Presence
 	u.mu.Unlock()
@@ -318,7 +318,7 @@ func (u *UI) submit(text string) {
 			return
 		}
 		u.reloadConvs()
-		u.selectConv(chatcore.RoomConv(room))
+		u.selectConv(chat.RoomConv(room))
 	case "/leave":
 		conv := u.currentConv()
 		if arg == "" && conv.IsRoom() {
@@ -390,11 +390,11 @@ func (u *UI) answerTransfer(accept bool, id string) {
 		u.note("[red]" + err.Error())
 		return
 	}
-	var pick chatcore.Transfer
+	var pick chat.Transfer
 	found := false
 	for i := len(list) - 1; i >= 0; i-- {
 		tr := list[i]
-		if tr.State != chatcore.TransferIncoming {
+		if tr.State != chat.TransferIncoming {
 			continue
 		}
 		if id != "" && !strings.HasPrefix(string(tr.ID), id) && tr.Name != id {
@@ -444,9 +444,10 @@ func (u *UI) showHelp() {
   /quit             quit
 
 [::b]What this is[-::-]
-  A LAN chat with no server and no accounts. Nothing is encrypted and no
-  peer is authenticated; anyone on this network can join in and can read
-  what goes past. See docs/security.md.
+  A LAN chat with one server on your own network and no accounts.
+  Enrolment is open, nothing is encrypted and nobody is authenticated:
+  anyone who can reach the server can join in and read what goes past.
+  See docs/security.md.
 `))
 }
 
@@ -458,13 +459,10 @@ func (u *UI) showPeers() {
 	}
 	var b strings.Builder
 	if len(peers) == 0 {
-		b.WriteString("Nobody else is here yet.\n\nPeers appear a few seconds after they start.\nIf nobody ever appears, multicast may be blocked on this network:\nsee docs/protocol.md.")
+		b.WriteString("Nobody else is here yet.\n\nEveryone enrolled with the same server appears a few seconds after\nthey start. If nobody ever appears, this machine may not have found\nthe server: see /status, and docs/protocol.md.")
 	}
 	for _, p := range peers {
 		mark := " "
-		if !p.Known {
-			mark = "?"
-		}
 		if p.Blocked {
 			mark = "x"
 		}
@@ -472,7 +470,7 @@ func (u *UI) showPeers() {
 			mark, tcellHex(p.Color), p.DisplayName(), p.Presence.Valid(),
 			p.Addr, strings.Join(p.Rooms, " "))
 	}
-	b.WriteString("\n? = this peer connected without ever announcing itself.\nx = blocked.")
+	b.WriteString("\nx = blocked here: the server still relays them, this machine drops them.")
 	u.showText(" Who is here ", b.String())
 }
 
@@ -501,9 +499,13 @@ func (u *UI) showStatus() {
 		u.note("[red]" + err.Error())
 		return
 	}
+	link := "connected"
+	if !st.Connected {
+		link = "not connected — showing what this machine already has"
+	}
 	u.showText(" Daemon ", fmt.Sprintf(
-		"version    %s\nsocket     %s\nlistening  %s\ndiscovery  %s\nstorage    %s\npeers      %d (%d here now)\nfront ends %d\nup since   %s",
-		st.Version, st.Socket, st.Listen, st.Discovery, storage(st.DataDir),
+		"version    %s\nsocket     %s\nserver     %s\nlink       %s\ndiscovery  %s\ncursor     %d\nstorage    %s\npeople     %d (%d here now)\nfront ends %d\nup since   %s",
+		st.Version, st.Socket, st.Server, link, st.Discovery, st.Cursor, storage(st.DataDir),
 		st.Peers, st.Online, st.Clients, st.Started.Format(time.RFC1123)))
 }
 
@@ -589,7 +591,7 @@ func (u *UI) reloadConvs() {
 		return
 	}
 	peers, _ := u.client.Peers()
-	names := map[chatcore.PeerID]string{}
+	names := map[chat.PeerID]string{}
 	for _, p := range peers {
 		names[p.ID] = p.DisplayName()
 	}
@@ -619,15 +621,15 @@ func (u *UI) reloadConvs() {
 	}
 }
 
-func convTitle(c chatcore.Conversation) string {
+func convTitle(c chat.Conversation) string {
 	name := c.Title
 	if c.Room == "" {
 		switch c.Presence.Valid() {
-		case chatcore.PresenceOnline:
+		case chat.PresenceOnline:
 			name = "[green]•[-] " + name
-		case chatcore.PresenceAway:
+		case chat.PresenceAway:
 			name = "[yellow]•[-] " + name
-		case chatcore.PresenceBusy:
+		case chat.PresenceBusy:
 			name = "[red]•[-] " + name
 		default:
 			name = "[gray]•[-] " + name
@@ -641,7 +643,7 @@ func convTitle(c chatcore.Conversation) string {
 	return name
 }
 
-func convSubtitle(c chatcore.Conversation) string {
+func convSubtitle(c chat.Conversation) string {
 	line := strings.TrimSpace(strings.ReplaceAll(c.Last, "\n", " "))
 	if line == "" && c.Members > 0 {
 		return fmt.Sprintf("  %d here", c.Members)
@@ -675,7 +677,7 @@ func (u *UI) selectIndex(i int) {
 	}()
 }
 
-func (u *UI) selectConv(id chatcore.ConversationID) {
+func (u *UI) selectConv(id chat.ConversationID) {
 	u.mu.Lock()
 	for i, c := range u.convs {
 		if c.ID == id {
@@ -687,7 +689,7 @@ func (u *UI) selectConv(id chatcore.ConversationID) {
 	u.mu.Unlock()
 }
 
-func (u *UI) currentConv() chatcore.ConversationID {
+func (u *UI) currentConv() chat.ConversationID {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	return u.current
@@ -722,7 +724,7 @@ func (u *UI) reloadMessages() {
 	u.log.ScrollToEnd()
 }
 
-func messageLine(m chatcore.Message, self chatcore.PeerID, names map[chatcore.PeerID]string) string {
+func messageLine(m chat.Message, self chat.PeerID, names map[chat.PeerID]string) string {
 	stamp := m.Sent.Format("15:04")
 	if m.System {
 		return fmt.Sprintf("[gray]%s  · %s[-]\n", stamp, m.Body)
@@ -732,20 +734,20 @@ func messageLine(m chatcore.Message, self chatcore.PeerID, names map[chatcore.Pe
 		if n, ok := names[m.From]; ok {
 			who = n
 		} else {
-			who = chatcore.ShortID(m.From)
+			who = chat.ShortID(m.From)
 		}
 	}
-	colour := tcellHex(chatcore.ColorForID(m.From))
+	colour := tcellHex(chat.ColorForID(m.From))
 	mark := ""
 	if m.From == self || m.Mine {
 		switch m.State {
-		case chatcore.StateQueued:
+		case chat.StateQueued:
 			mark = " [yellow](waiting)[-]"
-		case chatcore.StateSending:
+		case chat.StateSending:
 			mark = " [gray](sending)[-]"
-		case chatcore.StateFailed:
+		case chat.StateFailed:
 			mark = " [red](not delivered)[-]"
-		case chatcore.StateDelivered:
+		case chat.StateDelivered:
 			mark = " [green]✓[-]"
 		}
 	}
@@ -776,9 +778,6 @@ func (u *UI) drawHeadline() {
 		if p.Addr != "" {
 			line += "   [gray]" + p.Addr + "[-]"
 		}
-		if !p.Known {
-			line += "   [yellow]never announced itself[-]"
-		}
 	}
 	u.mu.Lock()
 	who := u.typing[conv]
@@ -790,7 +789,7 @@ func (u *UI) drawHeadline() {
 			if n, ok := names[id]; ok {
 				list = append(list, n)
 			} else {
-				list = append(list, chatcore.ShortID(id))
+				list = append(list, chat.ShortID(id))
 			}
 		}
 		sort.Strings(list)
@@ -849,20 +848,20 @@ func tcellHex(s string) string {
 	return "white"
 }
 
-func transferLine(tr chatcore.Transfer) string {
+func transferLine(tr chat.Transfer) string {
 	dir := "→"
 	if tr.Incoming {
 		dir = "←"
 	}
 	state := string(tr.State)
-	if tr.State == chatcore.TransferRunning && tr.Size > 0 {
+	if tr.State == chat.TransferRunning && tr.Size > 0 {
 		state = fmt.Sprintf("%d%%", tr.Done*100/tr.Size)
 	}
 	line := fmt.Sprintf("%s %-32s %9s  %s", dir, tr.Name, humanSize(tr.Size), state)
 	if tr.Error != "" {
 		line += "  [red]" + tr.Error + "[-]"
 	}
-	if tr.State == chatcore.TransferIncoming {
+	if tr.State == chat.TransferIncoming {
 		line += "   [yellow]/accept or /decline[-]"
 	}
 	return line
