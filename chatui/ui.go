@@ -44,6 +44,7 @@ type session struct {
 	declineBt *widgets.Button
 	status    *widgets.StatusBar
 	menu      *widgets.MenuBar
+	me        *identityBar
 
 	mu        sync.Mutex
 	self      chat.Identity
@@ -54,6 +55,13 @@ type session struct {
 	transfers map[chat.TransferID]chat.Transfer
 	daemonUp  bool
 	note      string
+	// server and connected are what the identity strip and the title say
+	// about where this window's messages are going.
+	server    string
+	connected bool
+	// titled is the last title pushed to the window, so a redraw that
+	// changes nothing does not talk to the compositor.
+	titled string
 	// pending is work that arrived from the daemon while no event loop
 	// was pumping. See post.
 	pending []func()
@@ -187,7 +195,12 @@ func (s *session) build() {
 	right.Add(widgets.NewSeparator())
 	right.Add(composerRow)
 
-	split := widgets.NewSplitter(true, s.list, right)
+	// Whose window this is, above the conversations. See identityBar.
+	s.me = newIdentityBar(s.showPreferences)
+	left := widgets.NewColumn(s.me, widgets.NewSeparator()).WithGap(0)
+	left.AddFlex(s.list, 1)
+
+	split := widgets.NewSplitter(true, left, right)
 	split.Ratio = 0.26
 
 	s.status = widgets.NewStatusBar("", "", "")
@@ -307,6 +320,11 @@ func (s *session) reloadAll() {
 	if id, err := s.cli.Identity(); err == nil {
 		s.mu.Lock()
 		s.self = id
+		s.mu.Unlock()
+	}
+	if st, err := s.cli.Status(); err == nil {
+		s.mu.Lock()
+		s.server, s.connected = st.Server, st.Connected
 		s.mu.Unlock()
 	}
 	s.reloadPeers()
@@ -491,6 +509,7 @@ func (s *session) typingNames(conv chat.ConversationID) string {
 func (s *session) drawStatus() {
 	s.mu.Lock()
 	self, up, note := s.self, s.daemonUp, s.note
+	server, connected := s.server, s.connected
 	online := 0
 	for _, p := range s.peers {
 		if p.Presence.Valid() != chat.PresenceOffline {
@@ -499,6 +518,15 @@ func (s *session) drawStatus() {
 	}
 	total := len(s.peers)
 	s.mu.Unlock()
+
+	where := chat.WhereTo(chat.DaemonStatus{Server: server, Connected: connected}, up)
+	s.me.set(self, where)
+	// The window title carries the name too: two of these side by side are
+	// one entry each in the task bar, and "Chat" twice tells you nothing.
+	if title := self.Nick + " — comms-chat-lan"; s.win != nil && title != s.titled {
+		s.titled = title
+		s.win.SetTitle(title)
+	}
 
 	if !up {
 		s.status.SetParts("comms-chat-lan-clientd is not answering — reconnecting…", "", "")

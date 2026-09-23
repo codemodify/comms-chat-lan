@@ -33,10 +33,13 @@ type UI struct {
 	status   *tview.TextView
 	headline *tview.TextView
 
-	mu       sync.Mutex
-	convs    []chat.Conversation
-	current  chat.ConversationID
-	self     chat.Identity
+	mu      sync.Mutex
+	convs   []chat.Conversation
+	current chat.ConversationID
+	self    chat.Identity
+	// where is the shared "on <server>" / "offline — cached" line, so the
+	// terminal and the window say the same thing about one daemon.
+	where    string
 	typing   map[chat.ConversationID][]chat.PeerID
 	peerName map[chat.PeerID]string
 	up       bool
@@ -579,6 +582,11 @@ func (u *UI) reloadAll() {
 		u.self = id
 		u.mu.Unlock()
 	}
+	if st, err := u.client.Status(); err == nil {
+		u.mu.Lock()
+		u.where = chat.WhereTo(st, true)
+		u.mu.Unlock()
+	}
 	u.reloadConvs()
 	u.reloadMessages()
 	u.drawStatus()
@@ -802,7 +810,7 @@ func (u *UI) drawHeadline() {
 
 func (u *UI) drawStatus() {
 	u.mu.Lock()
-	self, up := u.self, u.up
+	self, up, where := u.self, u.up, u.where
 	u.mu.Unlock()
 	if !up {
 		u.status.SetText(" [red]comms-chat-lan-clientd is not answering — reconnecting…[-]")
@@ -810,8 +818,8 @@ func (u *UI) drawStatus() {
 	}
 	colour := tcellHex(self.Color)
 	u.status.SetText(fmt.Sprintf(
-		" [%s::b]%s[-::-]  %s   [gray]Ctrl+G keys and commands   Ctrl+N join a room   Ctrl+C quit[-]",
-		colour, self.Nick, self.Presence.Valid()))
+		" [%s::b]%s[-::-]  %s  [gray]·[-]  %s   [gray]Ctrl+G keys and commands   Ctrl+N join a room   Ctrl+C quit[-]",
+		colour, self.Nick, self.Presence.Valid(), where))
 }
 
 // note puts one line in the transcript that came from us rather than from

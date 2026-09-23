@@ -333,6 +333,29 @@ func (c *Client) Status() (DaemonStatus, error) {
 	return out, err
 }
 
+// WhereTo is the one-line answer to "where are this daemon's messages
+// going": the server it is enrolled with, or why there is none. Both front
+// ends show it beside the nickname, and they should not word it
+// differently — a person running the window and the terminal at once is
+// looking at one daemon.
+//
+// It is short on purpose: it lands in a sidebar and a status line, either
+// of which can be dragged narrow, and a truncated warning warns nobody.
+func WhereTo(st DaemonStatus, daemonUp bool) string {
+	switch {
+	case !daemonUp:
+		return "clientd is not answering"
+	case st.Connected && st.Server != "":
+		return "on " + st.Server
+	case st.Connected:
+		return "connected"
+	case st.Server != "":
+		return "offline — cached"
+	default:
+		return "looking for a server…"
+	}
+}
+
 // Identity is who we are on the LAN.
 func (c *Client) Identity() (Identity, error) {
 	var out Identity
