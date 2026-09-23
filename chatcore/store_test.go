@@ -162,14 +162,14 @@ func TestHistoryFileNameCannotEscapeTheHistoryDirectory(t *testing.T) {
 
 func TestSafeBaseNameDefangsAnIncomingFileName(t *testing.T) {
 	cases := map[string]string{
-		"report.pdf":            "report.pdf",
-		"../../../.bashrc":      "bashrc",
-		"/etc/passwd":           "passwd",
-		`..\..\windows\me.exe`:  "me.exe",
-		"...":                   "file",
-		"":                      "file",
-		"with\nnewline.txt":     "withnewline.txt",
-		"C:notes.txt":           "C_notes.txt",
+		"report.pdf":             "report.pdf",
+		"../../../.bashrc":       "bashrc",
+		"/etc/passwd":            "passwd",
+		`..\..\windows\me.exe`:   "me.exe",
+		"...":                    "file",
+		"":                       "file",
+		"with\nnewline.txt":      "withnewline.txt",
+		"C:notes.txt":            "C_notes.txt",
 		strings.Repeat("a", 400): strings.Repeat("a", 120),
 	}
 	for in, want := range cases {

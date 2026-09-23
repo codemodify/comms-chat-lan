@@ -82,8 +82,8 @@ func NewNode(store *Store, disc Discovery) *Node {
 		Store: store, Disc: disc,
 		conns: map[PeerID]*peerConn{}, typing: map[PeerID]map[ConversationID]time.Time{},
 		dialing: map[PeerID]bool{}, lastProgress: map[TransferID]time.Time{},
-		host:    strings.TrimSuffix(host, ".local"),
-		xfers:   newTransfers(),
+		host:  strings.TrimSuffix(host, ".local"),
+		xfers: newTransfers(),
 	}
 }
 
